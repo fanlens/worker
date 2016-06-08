@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from celery import Celery
+from config.db import Config
+
+config = Config("worker")
+
+app = Celery('fanlens',
+             broker=config['broker'],
+             backend=config['backend'],
+             include=[
+                 'worker.meta_pipeline',
+                 'worker.crawler',
+                 'worker.brain'
+             ])
+
+# Optional configuration, see the application user guide.
+app.conf.update(
+    CELERY_TASK_RESULT_EXPIRES=config['task_result_expires'],
+    CELERY_REDIRECT_STDOUTS=False
+)
+
+if __name__ == '__main__':
+    app.start()
