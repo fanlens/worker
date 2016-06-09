@@ -14,5 +14,6 @@ setup(
     install_requires=[
         'fl-base',
         'celery[redis]',
+        'msgpack-python'
     ],
 )

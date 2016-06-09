@@ -17,6 +17,9 @@ app = Celery('fanlens',
 
 # Optional configuration, see the application user guide.
 app.conf.update(
+    CELERY_TASK_SERIALIZER='msgpack',
+    CELERY_RESULT_SERIALIZER='msgpack',
+    CELERY_ACCEPT_CONTENT=['msgpack'],
     CELERY_TASK_RESULT_EXPIRES=config['task_result_expires'],
     CELERY_REDIRECT_STDOUTS=False
 )
