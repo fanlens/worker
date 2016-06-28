@@ -14,27 +14,22 @@ def get_tagger(model_id):
 
 
 @app.task
-def predict(text, fingerprint, model_id='default'):
-    tagger = get_tagger(model_id)
-    return tagger.predict((text, fingerprint))
-
-
-@app.task
-def predict_text(text, model_id='default'):
+def predict(text, fingerprint=None, model_id='default'):
     if not is_english(text):
         raise ValueError('text is not in english')
-    fingerprint = get_fingerprint(text).positions
+    if not fingerprint:
+        fingerprint = get_fingerprint(text).positions
     tagger = get_tagger(model_id)
     return tagger.predict((text, fingerprint))
 
 
-@app.task
-def train_model(user_id, tagset_id, sources=None, name=None, params=None):
+@app.task(bind=True)
+def train_model(self, user_id, tagset_id, sources=tuple(), name=None, params=None):
     factory = (TaggerFactory()
                .user_id(user_id)
                .tagset(tagset_id)
                .sources(sources)
-               .name(name)
+               .name(name or self.request.id)
                .params(params)
                .train()
                .persist())
