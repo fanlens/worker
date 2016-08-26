@@ -13,6 +13,7 @@ setup(
     include_package_data=True,
     install_requires=[
         'fl-base',
+        'fl-crawler',
         'celery[redis]',
         'msgpack-python'
     ],

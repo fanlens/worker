@@ -6,6 +6,7 @@ from functools import lru_cache
 from brain.tagger import TaggerFactory
 from brain.feature.language_detect import is_english
 from brain.feature.fingerprint import get_fingerprint
+from . import ProgressCallback
 
 from worker.celery import app
 
@@ -30,7 +31,7 @@ def predict(text, fingerprint=None, created_time=None, model_id='default'):
 
 @app.task(bind=True)
 def train_model(self, user_id, tagset_id, sources=tuple(), name=None, params=None):
-    factory = (TaggerFactory()
+    factory = (TaggerFactory(progress=ProgressCallback(self))
                .user_id(user_id)
                .tagset(tagset_id)
                .sources(sources)
