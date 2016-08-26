@@ -17,7 +17,7 @@ def get_tagger(model_id):
 
 
 @app.task
-def predict(text, fingerprint=None, created_time=None, model_id='default'):
+def predict(text, fingerprint=None, created_time=None, model_id='default', key_by:str=None):
     if not is_english(text):
         raise ValueError('text is not in english')
     if not fingerprint:
@@ -26,7 +26,11 @@ def predict(text, fingerprint=None, created_time=None, model_id='default'):
         created_time = datetime.datetime.utcnow()
 
     tagger = get_tagger(model_id)
-    return tagger.predict((text, fingerprint, created_time))
+    predicition = tagger.predict((text, fingerprint, created_time))
+    if key_by is not None:
+        return dict(key=key_by, prediction=predicition)
+    else:
+        return predicition
 
 
 @app.task(bind=True)
