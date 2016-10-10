@@ -10,8 +10,7 @@ app = Celery('fanlens',
              broker=config['broker'],
              backend=config['backend'],
              include=[
-                 'worker.meta_pipeline',
-                 'worker.crawler',
+                 'worker.meta',
                  'worker.brain'
              ])
 

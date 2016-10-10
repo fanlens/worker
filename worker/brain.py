@@ -3,15 +3,15 @@
 import datetime
 
 from functools import lru_cache
-from brain.tagger import TaggerFactory
+# from brain.tagger import TaggerFactory
 from brain.feature.language_detect import is_english
 from brain.feature.fingerprint import get_fingerprint
 from . import ProgressCallback
 
-from worker.celery import app
+from .celery import app
 
 
-@lru_cache(maxsize=64)
+@lru_cache(maxsize=32)
 def get_tagger(model_id):
     return TaggerFactory().name(model_id).tagger
 

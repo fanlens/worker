@@ -14,6 +14,7 @@ setup(
     install_requires=[
         'fl-base',
         'fl-crawler',
+        'python-dateutil',
         'celery[redis]',
         'msgpack-python'
     ],
