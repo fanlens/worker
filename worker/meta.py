@@ -27,7 +27,7 @@ def _extract_text(data: Data) -> Data:
     return data
 
 
-@app.task(trail=True)
+@app.task(trail=True, ignore_result=True)
 def extract_text(*_):
     logging.info('Extracting text ...')
     num = 0
@@ -53,7 +53,7 @@ def _extract_time(data: Data) -> Data:
     return data
 
 
-@app.task(trail=True)
+@app.task(trail=True, ignore_result=True)
 def extract_time(*_):
     logging.info('Extracting time ...')
     num = 0
@@ -71,7 +71,7 @@ def _add_language(data: Data) -> Data:
     return data
 
 
-@app.task(trail=True)
+@app.task(trail=True, ignore_result=True)
 def add_language(*_):
     logging.info('Adding language ...')
     num = 0
@@ -99,7 +99,7 @@ class FingerprintHandler(object):
         self._session.commit()
 
 
-@app.task(trail=True)
+@app.task(trail=True, ignore_result=True)
 def add_fingerprint(*_):
     logging.info('Adding fingerprints ...')
     with DB().ctx() as session:
@@ -109,7 +109,7 @@ def add_fingerprint(*_):
     logging.info('... Done')
 
 
-@app.task(trail=True)
+@app.task(trail=True, ignore_result=True)
 def meta_pipeline():
     logging.info('Starting meta pipeline ...')
     return (group(extract_text.s(), extract_time.s())
