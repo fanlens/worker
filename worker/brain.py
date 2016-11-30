@@ -25,15 +25,15 @@ def get_classifier(model_id: uuid.UUID) -> Lens:
 def predict_text(model_id: uuid.UUID, text, fingerprint=None, created_time=None):
     assert model_id
     assert text
-    if not is_english(text):
-        raise ValueError('text is not in english')
+    # if not is_english(text):
+    #     raise ValueError('text is not in english')
     if not fingerprint:
         fingerprint = get_fingerprint(text).positions
     if not created_time:
         created_time = datetime.datetime.utcnow()
     classifier = get_classifier(model_id=model_id)
     predicition = classifier.predict_proba([(text, fingerprint, created_time)])
-    return predicition
+    return list(predicition)
 
 
 @app.task
@@ -61,4 +61,4 @@ def train_model(self, tagset_id: int, source_ids: tuple = tuple(), n_estimators:
         sources = session.query(Source).filter(Source.id.in_(tuple(source_ids))).all()
     factory = LensTrainer(tagset, sources, progress=ProgressCallback(self))
     lens = factory.train(n_estimators=n_estimators, params=params)
-    return factory.persist(lens)
+    return str(factory.persist(lens))

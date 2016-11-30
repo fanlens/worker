@@ -114,4 +114,4 @@ def meta_pipeline():
     logging.info('Starting meta pipeline ...')
     return (group(extract_text.s(), extract_time.s())
             | add_language.s()
-            | add_fingerprint.s()).apply_async()
+            | add_fingerprint.s())()
