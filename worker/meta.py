@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import logging
 import dateutil.parser
+import uuid
 
 from celery import group
 from datetime import datetime
@@ -9,10 +10,13 @@ from datetime import datetime
 from brain.feature.language_detect import language_detect
 from brain.feature.fingerprint import get_fingerprints
 from db import DB
+from db.models.users import User
 from db.models.activities import Data, Lang, Language, Type, Text, Time, Fingerprint
 from utils.buffered import Buffered
 from utils.simple_utc import simple_utc
+
 from .celery import app
+from .brain import predict_stored_all
 
 text_extractors = {
     Type.facebook: lambda data: data.data['message'],
@@ -35,6 +39,8 @@ def extract_text(*_):
         for datum in session.query(Data).filter(Data.text == None):
             _extract_text(datum)
             num += 1
+            if not num % 500:
+                session.commit()
         session.commit()
     logging.info('... Done, added %d texts' % num)
 
@@ -61,6 +67,8 @@ def extract_time(*_):
         for datum in session.query(Data).filter(Data.time == None):
             _extract_time(datum)
             num += 1
+            if not num % 500:
+                session.commit()
         session.commit()
     logging.info('... Done, added %d times' % num)
 
@@ -79,6 +87,8 @@ def add_language(*_):
         for datum in session.query(Data).filter((Data.text != None) & (Data.language == None)):
             _add_language(datum)
             num += 1
+            if not num % 500:
+                session.commit()
         session.commit()
     logging.info('... Done, added %d languages' % num)
 
@@ -106,6 +116,20 @@ def add_fingerprint(*_):
         entries = session.query(Data).filter(Data.language.has(language='en') & (Data.fingerprint == None))
         buffered = Buffered(entries, FingerprintHandler(session), 500)
         buffered()
+    logging.info('... Done fingerprints')
+
+
+@app.task(trail=True, ignore_result=True)
+def add_prediction(*_):
+    logging.info('Adding predictions ...')
+    with DB().ctx() as session:
+        for user in session.query(User):
+            for tagset in user.tagsets:
+                predict_stored_all(tagset.id,
+                                   user.data
+                                   .filter((Data.text != None) & (Data.fingerprint != None) & (Data.time != None))
+                                   .order_by(Data.source_id),  # ordered for better caching
+                                   session)
     logging.info('... Done')
 
 
@@ -114,4 +138,5 @@ def meta_pipeline():
     logging.info('Starting meta pipeline ...')
     return (group(extract_text.s(), extract_time.s())
             | add_language.s()
-            | add_fingerprint.s())()
+            | add_fingerprint.s()
+            | add_prediction.s())()
