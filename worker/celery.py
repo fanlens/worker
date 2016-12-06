@@ -22,8 +22,14 @@ app.conf.update(
     CELERY_RESULT_SERIALIZER='msgpack',
     CELERY_ACCEPT_CONTENT=['msgpack'],
     CELERY_TASK_RESULT_EXPIRES=config['task_result_expires'],
-    CELERY_REDIRECT_STDOUTS=False
-)
+    CELERY_REDIRECT_STDOUTS=False,
+    TIMEZONE='UTC',
+    CELERYBEAT_SCHEDULE={
+        'meta-every-30-seconds': {
+            'task': 'worker.meta.meta_pipeline',
+            'schedule': 30.0
+        }
+    })
 
 if __name__ == '__main__':
     app.start()

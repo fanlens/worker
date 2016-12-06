@@ -2,7 +2,6 @@
 # -*- coding: utf-8 -*-
 import logging
 import dateutil.parser
-import uuid
 
 from celery import group
 from datetime import datetime
@@ -11,6 +10,7 @@ from brain.feature.language_detect import language_detect
 from brain.feature.fingerprint import get_fingerprints
 from db import DB
 from db.models.users import User
+from db.models.brain import Job
 from db.models.activities import Data, Lang, Language, Type, Text, Time, Fingerprint
 from utils.buffered import Buffered
 from utils.simple_utc import simple_utc
@@ -127,16 +127,38 @@ def add_prediction(*_):
             for tagset in user.tagsets:
                 predict_stored_all(tagset.id,
                                    user.data
-                                   .filter((Data.text != None) & (Data.fingerprint != None) & (Data.time != None))
+                                   .filter((Data.text != None) & (Data.fingerprint != None) &
+                                           (Data.time != None) & (Data.prediction == None))
                                    .order_by(Data.source_id),  # ordered for better caching
                                    session)
     logging.info('... Done')
 
 
 @app.task(trail=True, ignore_result=True)
+def unlock(self, job_id: str):
+    logging.info('Unlocking meta pipeline...')
+    with DB().ctx() as session:
+        crawl_user = session.query(User).filter_by(email="crawler@fanlens.io").one()
+        crawl_user.jobs.filter_by(id=job_id).delete()
+        session.commit()
+    logging.info('... Done')
+
+
+@app.task(trail=True, ignore_result=True)
 def meta_pipeline():
-    logging.info('Starting meta pipeline ...')
-    return (group(extract_text.s(), extract_time.s())
-            | add_language.s()
-            | add_fingerprint.s()
-            | add_prediction.s())()
+    with DB().ctx() as session:
+        crawl_user = session.query(User).filter_by(email="crawler@fanlens.io").one()
+        if not crawl_user.jobs.all():
+            crawl_user.jobs.append(Job())
+            session.commit()
+            job = crawl_user.jobs.first()
+            logging.info('Starting meta pipeline ...')
+            return (group(extract_text.s(), extract_time.s())
+                    | add_language.s()
+                    | add_fingerprint.s()
+                    | add_prediction.s()
+                    | unlock.s(str(job.id)))()
+        else:
+            logging.info('Already a meta pipeline running ...')
+
+

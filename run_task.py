@@ -3,4 +3,4 @@
 from worker.meta import meta_pipeline
 
 if __name__ == "__main__":
-    print([v for v in meta_pipeline.delay().collect()])
+    print(meta_pipeline.delay())
