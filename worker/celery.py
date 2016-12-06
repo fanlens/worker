@@ -27,7 +27,7 @@ app.conf.update(
     CELERYBEAT_SCHEDULE={
         'meta-every-30-seconds': {
             'task': 'worker.meta.meta_pipeline',
-            'schedule': 30.0
+            'schedule': config['meta_schedule']
         }
     })
 
