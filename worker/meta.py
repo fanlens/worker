@@ -26,7 +26,7 @@ text_extractors = {
 
 
 def _extract_text(data: Data) -> Data:
-    text = text_extractors[data.source.type](data).replace('\b', '')
+    text = text_extractors[data.source.type](data).replace('\b', '').encode('ascii', 'ignore').decode('utf-8', 'ignore')
     data.text = Text(text=text)
     return data
 
