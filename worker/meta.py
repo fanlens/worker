@@ -1,22 +1,23 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import logging
-import dateutil.parser
-
-from celery import group
 from datetime import datetime
 
-from brain.feature.language_detect import language_detect
+import dateutil.parser
 from brain.feature.fingerprint import get_fingerprints
+from brain.feature.language_detect import language_detect
+from brain.feature.translate import translate
+from celery import group
 from db import DB
-from db.models.users import User
+from db.models.activities import Data, Lang, Language, Type, Text, Time, Fingerprint, Translation, Tagging
 from db.models.brain import Job
-from db.models.activities import Data, Lang, Language, Type, Text, Time, Fingerprint
+from db.models.users import User
+from sqlalchemy import not_
 from utils.buffered import Buffered
 from utils.simple_utc import simple_utc
 
-from .celery import app
 from .brain import predict_stored_all
+from .celery import app
 
 text_extractors = {
     Type.facebook: lambda data: data.data['message'],
@@ -26,7 +27,9 @@ text_extractors = {
 
 
 def _extract_text(data: Data) -> Data:
-    text = text_extractors[data.source.type](data).replace('\b', '').encode('ascii', 'ignore').decode('utf-8', 'ignore')
+    text = text_extractors[data.source.type](data).replace('\x7f', '').replace('\b', '').encode('ascii',
+                                                                                                'ignore').decode(
+        'utf-8', 'ignore')
     data.text = Text(text=text)
     return data
 
@@ -74,8 +77,12 @@ def extract_time(*_):
 
 
 def _add_language(data: Data) -> Data:
-    lang = language_detect(data.text.text)
-    data.language = Language(language=Lang[lang])
+    try:
+        lang = language_detect(data.text.text)
+        data.language = Language(language=Lang[lang])
+    except KeyError as err:
+        logging.error('couldn\'t lang detect:', data.text.text)
+        logging.exception(err)
     return data
 
 
@@ -91,6 +98,32 @@ def add_language(*_):
                 session.commit()
         session.commit()
     logging.info('... Done, added %d languages' % num)
+
+
+class TranslationsHandler(object):
+    def __init__(self, session):
+        self._session = session
+
+    def __call__(self, buffer):
+        texts = [entry.text.text for entry in buffer]
+        if not texts:
+            return
+        logging.info('Creating translations for %d texts' % len(texts))
+        translations = translate(texts)
+        for store_entry, translation in zip(buffer, translations):
+            store_entry.text.translations.append(Translation(translation=translation, target_language='en'))
+        logging.info('Flushing translations data, %d translations' % len(translations))
+        self._session.commit()
+
+
+@app.task(trail=True, ignore_result=True)
+def add_translation(*_):
+    logging.info('Adding translations ...')
+    with DB().ctx() as session:
+        entries = session.query(Data).join(Tagging, Tagging.data_id == Data.id).filter(not_(Data.language.has(language='en')) & (Data.source_id == 9) & (Tagging.tag_id == 300))
+        buffered = Buffered(entries, TranslationsHandler(session), 20)
+        buffered()
+    logging.info('... Done translations')
 
 
 class FingerprintHandler(object):
@@ -155,10 +188,9 @@ def meta_pipeline():
             logging.info('Starting meta pipeline ...')
             return (group(extract_text.s(), extract_time.s())
                     | add_language.s()
+                    | add_translation.s()
                     | add_fingerprint.s()
                     | add_prediction.s()
                     | unlock.s(str(job.id)))()
         else:
             logging.info('Already a meta pipeline running ...')
-
-
