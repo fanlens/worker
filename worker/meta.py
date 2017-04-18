@@ -120,7 +120,8 @@ class TranslationsHandler(object):
 def add_translation(*_):
     logging.info('Adding translations ...')
     with DB().ctx() as session:
-        entries = session.query(Data).join(Tagging, Tagging.data_id == Data.id).filter(not_(Data.language.has(language='en')) & (Data.source_id == 9) & (Tagging.tag_id == 300))
+        #entries = session.query(Data).join(Tagging, Tagging.data_id == Data.id).filter(not_(Data.language.has(language='en')) & (Data.source_id == 9) & (Tagging.tag_id == 300))
+        entries = session.query(Data).filter(not_(Data.language.has(language='en')))
         buffered = Buffered(entries, TranslationsHandler(session), 20)
         buffered()
     logging.info('... Done translations')
@@ -188,7 +189,7 @@ def meta_pipeline():
             logging.info('Starting meta pipeline ...')
             return (group(extract_text.s(), extract_time.s())
                     | add_language.s()
-                    | add_translation.s()
+                    # | add_translation.s()
                     | add_fingerprint.s()
                     | add_prediction.s()
                     | unlock.s(str(job.id)))()
