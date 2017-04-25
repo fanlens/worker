@@ -4,12 +4,12 @@ import logging
 from datetime import datetime
 
 import dateutil.parser
-from brain.feature.fingerprint import get_fingerprints
 from brain.feature.language_detect import language_detect
 from brain.feature.translate import translate
+from brain.feature.fingerprint import get_fingerprints
 from celery import group
 from db import DB
-from db.models.activities import Data, Lang, Language, Type, Text, Time, Fingerprint, Translation, Tagging
+from db.models.activities import Data, Lang, Language, Type, Text, Time, Translation, Tagging, Fingerprint
 from db.models.brain import Job
 from db.models.users import User
 from sqlalchemy import not_
@@ -120,19 +120,37 @@ class TranslationsHandler(object):
 def add_translation(*_):
     logging.info('Adding translations ...')
     with DB().ctx() as session:
-        #entries = session.query(Data).join(Tagging, Tagging.data_id == Data.id).filter(not_(Data.language.has(language='en')) & (Data.source_id == 9) & (Tagging.tag_id == 300))
-        entries = session.query(Data).filter(not_(Data.language.has(language='en')))
-        buffered = Buffered(entries, TranslationsHandler(session), 20)
+        # todo remove condition
+        entries = (session.query(Data)
+                   .join(Tagging, Tagging.data_id == Data.id)
+                   .join(Text, Text.data_id == Data.id)
+                   .filter((Text.translations == None) &
+                           not_(Data.language.has(language='en')) &
+                           (Data.source_id == 9) &
+                           (Tagging.tag_id == 300)))
+        # entries = session.query(Data).filter(not_(Data.language.has(language='en')))
+        # buffered = Buffered(entries, TranslationsHandler(session), 20)
+        buffered = Buffered(entries, TranslationsHandler(session), 2)
         buffered()
-    logging.info('... Done translations')
+        logging.info('... Done translations')
 
 
 class FingerprintHandler(object):
     def __init__(self, session):
         self._session = session
 
+    @staticmethod
+    def _gettext(entry: Data):
+        if entry.language.language == 'en':
+            return entry.text.text
+
+        english_translation = entry.text.translations.filter(
+            Translation.target_language == 'en').one_or_none()  # type: Translation
+        if english_translation:
+            return english_translation.translation
+
     def __call__(self, buffer):
-        texts = [entry.text.text for entry in buffer]
+        texts = [self._gettext(entry) for entry in buffer]
         if not texts:
             return
         logging.info('Creating fingerprints for %d texts' % len(texts))
@@ -147,7 +165,11 @@ class FingerprintHandler(object):
 def add_fingerprint(*_):
     logging.info('Adding fingerprints ...')
     with DB().ctx() as session:
-        entries = session.query(Data).filter(Data.language.has(language='en') & (Data.fingerprint == None))
+        entries = (session.query(Data)
+                   .join(Text, Text.data_id == Data.id)
+                   .join(Translation, (Translation.text_id == Text.id) & (Translation.target_language == 'en'))
+                   .filter((Data.language.has(language='en') | (Translation != None)) &
+                           (Data.fingerprint == None)))  # todo: possible bug at "Translation != None"
         buffered = Buffered(entries, FingerprintHandler(session), 500)
         buffered()
     logging.info('... Done fingerprints')
