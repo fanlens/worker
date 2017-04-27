@@ -4,9 +4,9 @@ import logging
 from datetime import datetime
 
 import dateutil.parser
+from brain.feature.fingerprint import get_fingerprints
 from brain.feature.language_detect import language_detect
 from brain.feature.translate import translate
-from brain.feature.fingerprint import get_fingerprints
 from celery import group
 from db import DB
 from db.models.activities import Data, Lang, Language, Type, Text, Time, Translation, Tagging, Fingerprint
@@ -127,7 +127,7 @@ def add_translation(*_):
                    .filter((Text.translations == None) &
                            not_(Data.language.has(language='en')) &
                            (Data.source_id == 9) &
-                           (Tagging.tag_id == 300)))
+                           (Tagging.tag_id.in_((300, 301)))))
         # entries = session.query(Data).filter(not_(Data.language.has(language='en')))
         # buffered = Buffered(entries, TranslationsHandler(session), 20)
         buffered = Buffered(entries, TranslationsHandler(session), 2)
@@ -150,7 +150,7 @@ class FingerprintHandler(object):
             return english_translation.translation
 
     def __call__(self, buffer):
-        texts = [self._gettext(entry) for entry in buffer]
+        texts = [self._gettext(entry) or "unknown" for entry in buffer]
         if not texts:
             return
         logging.info('Creating fingerprints for %d texts' % len(texts))
@@ -167,8 +167,8 @@ def add_fingerprint(*_):
     with DB().ctx() as session:
         entries = (session.query(Data)
                    .join(Text, Text.data_id == Data.id)
-                   .join(Translation, (Translation.text_id == Text.id) & (Translation.target_language == 'en'))
-                   .filter((Data.language.has(language='en') | (Translation != None)) &
+                   .join(Translation, (Translation.text_id == Text.id))
+                   .filter((Data.language.has(language='en') | (Translation.target_language == 'en')) &
                            (Data.fingerprint == None)))  # todo: possible bug at "Translation != None"
         buffered = Buffered(entries, FingerprintHandler(session), 500)
         buffered()
@@ -211,7 +211,7 @@ def meta_pipeline():
             logging.info('Starting meta pipeline ...')
             return (group(extract_text.s(), extract_time.s())
                     | add_language.s()
-                    # | add_translation.s()
+                    | add_translation.s()
                     | add_fingerprint.s()
                     | add_prediction.s()
                     | unlock.s(str(job.id)))()
