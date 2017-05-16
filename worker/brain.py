@@ -1,19 +1,18 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import itertools
 import datetime
-import uuid
+import itertools
 import typing
+import uuid
 from functools import lru_cache
 
+from brain.feature.fingerprint import get_fingerprint
+from brain.lens import Lens, LensTrainer
 from db import DB, Session, insert_or_ignore
 from db.models.activities import Data, Source, TagSet
 from db.models.brain import Model, Prediction
-from brain.lens import Lens, LensTrainer
-from brain.feature.language_detect import is_english
-from brain.feature.fingerprint import get_fingerprint
-from . import ProgressCallback
 
+from . import ProgressCallback
 from .celery import app
 
 _db = DB()
@@ -79,12 +78,12 @@ def predict_stored_all(tagset_id: int, data: typing.Iterable[Data], session: Ses
     """for best performance data should be sorted by their source_id"""
     prediction_group_size = 100
     commit_group_size = 500
+    # i don't know what i was thinking, sorry
     for commit_group in grouper(
             itertools.chain.from_iterable(
                 itertools.chain.from_iterable(
-                    zip(classifier.predict_proba(
-                        [(datum.text.text, datum.fingerprint.fingerprint, datum.time.time)
-                         for datum in prediction_group if datum]),
+                    zip(classifier.predict_proba([(datum.text.text, datum.fingerprint.fingerprint, datum.time.time)
+                                                  for datum in prediction_group if datum]),
                         prediction_group,
                         itertools.repeat(classifier.model.id))
                     for prediction_group, classifier in zip(
@@ -93,7 +92,8 @@ def predict_stored_all(tagset_id: int, data: typing.Iterable[Data], session: Ses
                     if classifier)
                 for source_id, source_group in group_by_source_id(data)), commit_group_size, (None, None, None)):
         for prediction, datum, model_id in commit_group:
-            prediction and insert_or_ignore(session, Prediction(data_id=datum.id, model_id=model_id, prediction=prediction))
+            prediction and insert_or_ignore(session,
+                                            Prediction(data_id=datum.id, model_id=model_id, prediction=prediction))
         session.commit()
 
 
@@ -106,9 +106,9 @@ def train_model(self, tagset_id: int, source_ids: tuple = tuple(), n_estimators:
     with _db.ctx() as session:
         tagset = session.query(TagSet).get(tagset_id)
         sources = session.query(Source).filter(Source.id.in_(tuple(source_ids))).all()
-    factory = LensTrainer(tagset, sources, progress=ProgressCallback(self))
-    lens = factory.train(n_estimators=n_estimators, params=params)
-    return str(factory.persist(lens))
+        factory = LensTrainer(tagset, sources, progress=ProgressCallback(self))
+        lens = factory.train(n_estimators=n_estimators, _params=params)
+        return str(factory.persist(lens, session))
 
 
 if __name__ == "__main__":
