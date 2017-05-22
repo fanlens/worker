@@ -27,9 +27,12 @@ text_extractors = {
 
 
 def _extract_text(data: Data) -> Data:
-    text = text_extractors[data.source.type](data).replace('\x7f', '').replace('\b', '').encode('ascii',
-                                                                                                'ignore').decode(
-        'utf-8', 'ignore')
+    # text = (text_extractors[data.source.type](data)
+    #     .replace('\x7f', '')
+    #     .replace('\b', '')
+    #     .encode('ascii', 'ignore')
+    #     .decode('utf-8', 'ignore'))
+    text = text_extractors[data.source.type](data)
     data.text = Text(text=text)
     return data
 
@@ -213,7 +216,7 @@ def meta_pipeline():
                     | add_language.s()
                     | add_translation.s()
                     | add_fingerprint.s()
-                    | add_prediction.s()
+                    # | add_prediction.s()
                     | unlock.s(str(job.id)))()
         else:
             logging.info('Already a meta pipeline running ...')
