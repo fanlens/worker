@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import uuid
 
 from celery import Celery
 from config.db import Config
@@ -33,7 +32,7 @@ app.conf.update(
         },
         'scheduled_brain_maintenance': {
             'task': 'worker.brain.maintenance',
-            'schedule': 10
+            'schedule': config['maintenance_schedule']
         }
     })
 
