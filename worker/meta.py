@@ -8,15 +8,16 @@ from brain.feature.fingerprint import get_fingerprints
 from brain.feature.language_detect import language_detect
 # from brain.feature.translate import translate
 from brain.feature.translate_microsoft import translate
-from celery import group
 from db import DB
 from db.models.activities import Data, Lang, Language, Type, Text, Time, Translation, Fingerprint
-from db.models.brain import Job
+from db.models.brain import Model, Prediction
 from db.models.users import User
+from job import Space, close_exclusive_run
 from sqlalchemy import not_
 from utils.buffered import Buffered
 from utils.simple_utc import simple_utc
 
+from . import exclusive_task
 from .brain import predict_stored_all
 from .celery import app
 
@@ -180,37 +181,35 @@ def add_prediction(*_):
             for tagset in user.tagsets:
                 predict_stored_all(tagset.id,
                                    user.data
+                                   .outerjoin(Prediction, Prediction.data_id == Data.id)
+                                   .join(Model, (Prediction.model_id == Model.id) & (Model.tagset_id == tagset.id))
                                    .filter((Data.text != None) & (Data.fingerprint != None) &
-                                           (Data.time != None) & (Data.prediction == None))
+                                           (Data.time != None) & (Prediction.id == None))
                                    .order_by(Data.source_id),  # ordered for better caching
                                    session)
     logging.info('... Done')
 
 
 @app.task(trail=True, ignore_result=True)
-def unlock(self, job_id: str):
-    logging.info('Unlocking meta pipeline...')
-    with DB().ctx() as session:
-        crawl_user = session.query(User).filter_by(email="crawler@fanlens.io").one()
-        crawl_user.jobs.filter_by(id=job_id).delete()
-        session.commit()
-    logging.info('... Done')
+def graciously_release_exclusive_run(run):
+    """will close automatically as soon as the original run is destoryed, this is to make it more clear"""
+    close_exclusive_run(run)
 
 
-@app.task(trail=True, ignore_result=True)
-def meta_pipeline():
-    with DB().ctx() as session:
-        crawl_user = session.query(User).filter_by(email="crawler@fanlens.io").one()
-        if not crawl_user.jobs.all():
-            crawl_user.jobs.append(Job())
-            session.commit()
-            job = crawl_user.jobs.first()
-            logging.info('Starting meta pipeline ...')
-            return (group(extract_text.s(), extract_time.s())
-                    | add_language.s()
-                    # | add_translation.s()
-                    | add_fingerprint.s()
-                    | add_prediction.s()
-                    | unlock.s(str(job.id)))()
-        else:
-            logging.info('Already a meta pipeline running ...')
+@exclusive_task(app, Space.WORKER, trail=True, ignore_result=True)
+def meta_pipeline(*_):
+    logging.info('Starting full meta pipeline workers...')
+    # job_spec = (group(extract_text.s(), extract_time.s())
+    # | add_language.s()
+    ## | add_translation.s()
+    # | add_fingerprint.s()
+    # | add_prediction.s()
+    # | add_prediction.s())
+    # return job_spec()
+    extract_text()
+    extract_time()
+    add_language()
+    # add_translation()
+    add_fingerprint()
+    add_prediction()
+    logging.info('Done meta pipeline workers...')

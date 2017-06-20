@@ -17,6 +17,7 @@ app = Celery('fanlens',
 
 # Optional configuration, see the application user guide.
 app.conf.update(
+    CELERYD_LOG_FORMAT="[%(asctime)s: %(levelname)s/%(processName)s:%(funcName)s] %(message)s",
     CELERY_IGNORE_RESULT=False,
     CELERY_TRACK_STARTED=True,
     CELERY_TASK_SERIALIZER='msgpack',
@@ -26,9 +27,13 @@ app.conf.update(
     CELERY_REDIRECT_STDOUTS=False,
     TIMEZONE='UTC',
     CELERYBEAT_SCHEDULE={
-        'meta-every-30-seconds': {
+        'scheduled_meta_pipeline': {
             'task': 'worker.meta.meta_pipeline',
             'schedule': config['meta_schedule']
+        },
+        'scheduled_brain_maintenance': {
+            'task': 'worker.brain.maintenance',
+            'schedule': 10
         }
     })
 

@@ -2,12 +2,14 @@
 # -*- coding: utf-8 -*-
 import datetime
 import itertools
+import logging
+import os
 import typing
 import uuid
 from functools import lru_cache
 
 from brain.feature.fingerprint import get_fingerprint
-from brain.lens import Lens, LensTrainer
+from brain.lens import Lens, LensTrainer, model_file_root, model_file_path
 from db import DB, Session, insert_or_ignore
 from db.models.activities import Data, Source, TagSet
 from db.models.brain import Model, Prediction
@@ -98,7 +100,8 @@ def predict_stored_all(tagset_id: int, data: typing.Iterable[Data], session: Ses
 
 
 @app.task(bind=True)
-def train_model(self, tagset_id: int, source_ids: tuple = tuple(), n_estimators: int = 10, params: dict = None):
+def train_model(self, tagset_id: int, source_ids: tuple = tuple(), n_estimators: int = 10, _params: dict = None,
+                _score: float = 0.0):
     assert tagset_id and source_ids
     assert n_estimators
     if not 0 < n_estimators <= 1000:
@@ -107,8 +110,24 @@ def train_model(self, tagset_id: int, source_ids: tuple = tuple(), n_estimators:
         tagset = session.query(TagSet).get(tagset_id)
         sources = session.query(Source).filter(Source.id.in_(tuple(source_ids))).all()
         factory = LensTrainer(tagset, sources, progress=ProgressCallback(self))
-        lens = factory.train(n_estimators=n_estimators, _params=params)
+        lens = factory.train(n_estimators=n_estimators, _params=_params, _score=_score)
         return str(factory.persist(lens, session))
+
+
+@app.task(bind=True)
+def maintenance(self):
+    logging.info("Beginning Brain maintenance...")
+    (_, _, file_ids) = next(os.walk(model_file_root))
+    file_ids = set(file_ids)
+    with _db.ctx() as session:
+        db_ids = set([str(uuid) for (uuid,) in session.query(Model.id)])
+        missing_ids = db_ids.difference(file_ids)
+        logging.warning('The following model ids are missing the model file: %s' % missing_ids)
+        delete_ids = file_ids.difference(db_ids)
+        logging.warning('The following model ids are orphaned and will be deleted: %s' % delete_ids)
+        for delete_id in delete_ids:
+            os.remove(model_file_path(delete_id))
+    logging.info("... Done Brain maintenance")
 
 
 if __name__ == "__main__":
