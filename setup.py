@@ -16,6 +16,8 @@ setup(
         'fl-crawler',
         'python-dateutil',
         'celery[redis]',
-        'msgpack-python'
+        'msgpack-python',
+        'beautifulsoup4',
+        'requests',
     ],
 )

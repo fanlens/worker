@@ -11,7 +11,8 @@ app = Celery('fanlens',
              backend=config['backend'],
              include=[
                  'worker.meta',
-                 'worker.brain'
+                 'worker.brain',
+                 'worker.scrape',
              ])
 
 # Optional configuration, see the application user guide.
