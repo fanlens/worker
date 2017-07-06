@@ -20,9 +20,20 @@ from .celery import app
 _db = DB()
 
 
-@lru_cache(maxsize=32)
+@lru_cache(maxsize=256)
 def get_classifier(model_id: uuid.UUID) -> Lens:
     return model_id and Lens.load_from_id(model_id)
+
+
+@lru_cache(maxsize=256)
+def best_model_for_source_by_id(tagset_id: int, source_id: int) -> uuid.UUID:
+    with _db.ctx() as session:
+        source = session.query(Source).get(source_id)
+        assert source
+        model = source.models.filter_by(tagset_id=tagset_id).order_by(Model.score, Model.trained_ts).first()
+        if not model:
+            model = session.query(Model).filter_by(tagset_id=tagset_id).order_by(Model.score, Model.trained_ts).first()
+        return model and model.id
 
 
 @app.task
@@ -54,15 +65,6 @@ def predict_stored(model_id: uuid.UUID, data: Data):
                                                      data.time.time))
 
 
-@lru_cache(64)
-def best_model_for_source_by_id(tagset_id: int, source_id: int) -> uuid.UUID:
-    with _db.ctx() as session:
-        source = session.query(Source).get(source_id)
-        assert source
-        model = source.models.filter_by(tagset_id=tagset_id).order_by(Model.score, Model.trained_ts).first()
-        return model and model.id
-
-
 def grouper(iterable: typing.Iterable[typing.Any],
             n: int, fillvalue: typing.Any = None) -> typing.Iterable[typing.Iterable[typing.Any]]:
     """Collect data into fixed-length chunks or blocks"""
@@ -76,27 +78,44 @@ def group_by_source_id(data: typing.Iterable[Data]) -> typing.Iterable[typing.Tu
     return itertools.groupby(data, key=lambda datum: datum.source.id)
 
 
-def predict_stored_all(tagset_id: int, data: typing.Iterable[Data], session: Session):
-    """for best performance data should be sorted by their source_id"""
-    prediction_group_size = 100
-    commit_group_size = 500
-    # i don't know what i was thinking, sorry
-    for commit_group in grouper(
-            itertools.chain.from_iterable(
-                itertools.chain.from_iterable(
-                    zip(classifier.predict_proba([(datum.text.text, datum.fingerprint.fingerprint, datum.time.time)
-                                                  for datum in prediction_group if datum]),
-                        prediction_group,
-                        itertools.repeat(classifier.model.id))
-                    for prediction_group, classifier in zip(
-                        grouper(source_group, prediction_group_size),
-                        itertools.repeat(get_classifier(best_model_for_source_by_id(tagset_id, source_id))))
-                    if classifier)
-                for source_id, source_group in group_by_source_id(data)), commit_group_size, (None, None, None)):
-        for prediction, datum, model_id in commit_group:
-            prediction and insert_or_ignore(session,
-                                            Prediction(data_id=datum.id, model_id=model_id, prediction=prediction))
-        session.commit()
+def predict_buffered(tagset_id, source_id, buffer):
+    model_id = best_model_for_source_by_id(tagset_id, source_id)
+    if model_id:
+        classifier = get_classifier(model_id)
+        buffer_ids, buffer_data = zip(*buffer)
+        predictions = next(classifier.predict_proba(buffer_data))
+        return zip(buffer_ids, predictions), model_id
+    else:
+        logging.info("No model for tagset: %d, source: %d" % (tagset_id, source_id))
+        return [], None
+
+
+def predict_stored_all(data: typing.Iterable[Data], session: Session):
+    """works best if sorted by tagset id and source id"""
+    prediction_group_size = 200
+    current_identifier = (None, None)
+    buffer = []
+
+    def flush_predictions():
+        buffer_tagset_id, buffer_source_id = current_identifier
+        if buffer_tagset_id is None or buffer_source_id is None:
+            buffer.clear()
+            return
+        logging.info("Flushing %d predicitions for tagset: %d, source_id: %d" % (
+            len(buffer), buffer_tagset_id, buffer_source_id))
+        predictions, model_id = predict_buffered(buffer_tagset_id, buffer_source_id, buffer)
+        for insert_id, insert_prediction in predictions:
+            insert_or_ignore(session, Prediction(data_id=insert_id, model_id=model_id, prediction=insert_prediction))
+        logging.info("Done flushing")
+
+    for data_id, tagset_id, source_id, text, fingerprint, time in data:
+        if (tagset_id, source_id) != current_identifier or len(buffer) >= prediction_group_size:
+            flush_predictions()
+            buffer.clear()
+            current_identifier = (tagset_id, source_id)
+        buffer.append((data_id, (text, fingerprint, time)))
+    flush_predictions()
+    session.commit()
 
 
 @app.task(bind=True)

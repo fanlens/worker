@@ -9,7 +9,7 @@ from brain.feature.language_detect import language_detect
 # from brain.feature.translate import translate
 from brain.feature.translate_microsoft import translate
 from db import DB
-from db.models.activities import Data, Lang, Language, Type, Text, Time, Translation, Fingerprint
+from db.models.activities import Data, Lang, Language, Type, Text, Time, Translation, Fingerprint, TagSet, SourceUser
 from db.models.brain import Model, Prediction
 from db.models.users import User
 from job import Space, close_exclusive_run
@@ -177,16 +177,22 @@ def add_fingerprint(*_):
 def add_prediction(*_):
     logging.info('Adding predictions ...')
     with DB().ctx() as session:
-        for user in session.query(User):
-            for tagset in user.tagsets:
-                predict_stored_all(tagset.id,
-                                   user.data
-                                   .outerjoin(Prediction, Prediction.data_id == Data.id)
-                                   .join(Model, (Prediction.model_id == Model.id) & (Model.tagset_id == tagset.id))
-                                   .filter((Data.text != None) & (Data.fingerprint != None) &
-                                           (Data.time != None) & (Prediction.id == None))
-                                   .order_by(Data.source_id),  # ordered for better caching
-                                   session)
+        predict_stored_all(session.query(Data.id)
+                           .join(SourceUser, SourceUser.source_id == Data.source_id)
+                           .join(User, (SourceUser.user_id == User.id))
+                           .join(TagSet, (TagSet.user_id == User.id))
+                           .join(Text, Text.data_id == Data.id)
+                           .join(Time, Time.data_id == Data.id)
+                           .join(Fingerprint, Fingerprint.data_id == Data.id)
+                           .join(Model, (Model.user_id == User.id) & (Model.tagset_id == TagSet.id))
+                           .outerjoin(Prediction,
+                                      (Prediction.data_id == Data.id) & (Prediction.model_id == Model.id))
+                           .filter(Prediction.id == None)
+                           .add_columns(TagSet.id, Data.source_id, Text.text, Fingerprint.fingerprint,
+                                        Time.time)
+                           .order_by(TagSet.id, Data.source_id)  # ordered for better caching
+                           .yield_per(1000),
+                           session)
     logging.info('... Done')
 
 
@@ -213,3 +219,9 @@ def meta_pipeline(*_):
     add_fingerprint()
     add_prediction()
     logging.info('Done meta pipeline workers...')
+
+
+if __name__ == "__main__":
+    logging.getLogger().setLevel(logging.DEBUG)
+    logging.getLogger().addHandler(logging.StreamHandler())
+    meta_pipeline()
