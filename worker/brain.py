@@ -83,14 +83,18 @@ def predict_buffered(tagset_id, source_id, buffer):
     if model_id:
         classifier = get_classifier(model_id)
         buffer_ids, buffer_data = zip(*buffer)
-        predictions = next(classifier.predict_proba(buffer_data))
+        # logging.error(buffer_ids)
+        # logging.error(buffer_data)
+        predictions = classifier.predict_proba(buffer_data)
+        # logging.error(predictions)
+        # logging.error(list(zip(buffer_ids, predictions)))
         return zip(buffer_ids, predictions), model_id
     else:
         logging.info("No model for tagset: %d, source: %d" % (tagset_id, source_id))
         return [], None
 
 
-def predict_stored_all(data: typing.Iterable[Data], session: Session):
+def predict_stored_all(data: typing.Iterable, session: Session):
     """works best if sorted by tagset id and source id"""
     prediction_group_size = 200
     current_identifier = (None, None)
@@ -108,12 +112,12 @@ def predict_stored_all(data: typing.Iterable[Data], session: Session):
             insert_or_ignore(session, Prediction(data_id=insert_id, model_id=model_id, prediction=insert_prediction))
         logging.info("Done flushing")
 
-    for data_id, tagset_id, source_id, text, fingerprint, time in data:
+    for data_id, tagset_id, source_id, text, translation, fingerprint, time in data:
         if (tagset_id, source_id) != current_identifier or len(buffer) >= prediction_group_size:
             flush_predictions()
             buffer.clear()
             current_identifier = (tagset_id, source_id)
-        buffer.append((data_id, (text, fingerprint, time)))
+        buffer.append((data_id, (translation or text, fingerprint, time)))
     flush_predictions()
     session.commit()
 

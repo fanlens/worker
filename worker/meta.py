@@ -10,7 +10,7 @@ from brain.feature.language_detect import language_detect
 from brain.feature.translate_microsoft import translate
 from db import DB
 from db.models.activities import Data, Lang, Language, Type, Text, Time, Translation, Fingerprint, TagSet, SourceUser
-from db.models.brain import Model, Prediction
+from db.models.brain import Model, Prediction, ModelSources
 from db.models.users import User
 from job import Space, close_exclusive_run
 from sqlalchemy import not_
@@ -182,14 +182,18 @@ def add_prediction(*_):
                            .join(User, (SourceUser.user_id == User.id))
                            .join(TagSet, (TagSet.user_id == User.id))
                            .join(Text, Text.data_id == Data.id)
+                           .outerjoin(Translation,
+                                      (Translation.text_id == Text.id) & (Translation.target_language == 'en'))
                            .join(Time, Time.data_id == Data.id)
                            .join(Fingerprint, Fingerprint.data_id == Data.id)
                            .join(Model, (Model.user_id == User.id) & (Model.tagset_id == TagSet.id))
+                           .join(ModelSources,
+                                 (ModelSources.model_id == Model.id) & (ModelSources.source_id == Data.source_id))
                            .outerjoin(Prediction,
                                       (Prediction.data_id == Data.id) & (Prediction.model_id == Model.id))
                            .filter(Prediction.id == None)
-                           .add_columns(TagSet.id, Data.source_id, Text.text, Fingerprint.fingerprint,
-                                        Time.time)
+                           .add_columns(TagSet.id, Data.source_id, Text.text, Translation.translation,
+                                        Fingerprint.fingerprint, Time.time)
                            .order_by(TagSet.id, Data.source_id)  # ordered for better caching
                            .yield_per(1000),
                            session)
