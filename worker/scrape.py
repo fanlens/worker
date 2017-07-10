@@ -1,8 +1,13 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+import logging
 import requests
 from bs4 import BeautifulSoup
+
+from sqlalchemy import literal
+from db import DB, insert_or_ignore
+from db.models.scrape import Shortener
 
 from .celery import app
 
@@ -38,9 +43,15 @@ def scrape_meta_for_url(url):
     og_tags = dict((tag, find_or_none(soup, 'meta', 'content', property='og:%s' % tag))
                    for tag in OG_TAGS)
     tags.update(og_tags)
-    return tags
+    with DB().ctx() as session:
+        result = insert_or_ignore(session, Shortener(**tags))
+        session.commit()
+        insert_id = result.inserted_primary_key and result.inserted_primary_key[0] or None
+    return insert_id, tags
 
 
 if __name__ == "__main__":
-    print(scrape_meta_for_url(
-        'http://www.miamiherald.com/news/nation-world/article159642739.html'))
+    logging.getLogger().addHandler(logging.StreamHandler())
+    print(scrape_meta_for_url( 'http://www.miamiherald.com/news/nation-world/article159642739.html'))
+    print(scrape_meta_for_url( 'http://docs.sqlalchemy.org/en/latest/core/tutorial.html#coretutorial-insert-expressions'))
+    print(scrape_meta_for_url( 'https://www.nytimes.com/2017/07/07/briefing/g20-pennsylvania-station-tesla.html?rref=collection%2Fseriescollection%2Fus-morning-briefing&action=click&contentCollection=briefing&region=stream&module=stream_unit&version=latest&contentPlacement=1&pgtype=collection'))
