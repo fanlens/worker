@@ -6,7 +6,7 @@
 from celery import Celery
 from celery.utils import gen_task_name
 from job import runs_exclusive, Space
-import logging
+
 
 class ProgressCallback(object):
     def __init__(self, task):
@@ -29,7 +29,6 @@ def exclusive_task(app: Celery, space: Space, *task_args, **task_kwargs):
         @app.task(*task_args, name=gen_task_name(app, fun.__name__, fun.__module__), **task_kwargs)
         @runs_exclusive(space)
         def task(*args, **kwargs):
-            logging.error('wtf' + str(args) + str(kwargs))
             return fun(*args, **kwargs)
 
         return task
