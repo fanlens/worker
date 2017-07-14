@@ -165,7 +165,7 @@ def add_fingerprint(*_):
     with DB().ctx() as session:
         entries = (session.query(Data)
                    .join(Text, Text.data_id == Data.id)
-                   .join(Translation, (Translation.text_id == Text.id))
+                   .outerjoin(Translation, (Translation.text_id == Text.id))
                    .filter((Data.language.has(language='en') | (Translation.target_language == 'en')) &
                            (Data.fingerprint == None)))
         buffered = Buffered(entries, FingerprintHandler(session), 500)
