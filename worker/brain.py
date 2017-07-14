@@ -13,8 +13,9 @@ from brain.lens import Lens, LensTrainer, model_file_root, model_file_path
 from db import DB, Session, insert_or_ignore
 from db.models.activities import Data, Source, TagSet
 from db.models.brain import Model, Prediction
+from job import Space, close_exclusive_run
 
-from . import ProgressCallback
+from . import ProgressCallback, exclusive_task
 from .celery import app
 
 _db = DB()
@@ -122,7 +123,7 @@ def predict_stored_all(data: typing.Iterable, session: Session):
     session.commit()
 
 
-@app.task(bind=True)
+@exclusive_task(app, Space.BRAIN, trail=True, ignore_result=True, bind=True)
 def train_model(self, tagset_id: int, source_ids: tuple = tuple(), n_estimators: int = 10, _params: dict = None,
                 _score: float = 0.0):
     assert tagset_id and source_ids
