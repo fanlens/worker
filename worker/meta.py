@@ -9,8 +9,9 @@ from brain.feature.language_detect import language_detect
 # from brain.feature.translate import translate
 from brain.feature.translate_microsoft import translate
 from db import DB
-from db.models.activities import Data, Lang, Language, Type, Text, Time, Translation, Fingerprint, TagSet, SourceUser
-from db.models.brain import Model, Prediction, ModelSources
+from db.models.activities import Data, Fingerprint, Lang, Language, SourceUser, TagSetUser, Text, Time, Translation, \
+    Type
+from db.models.brain import Model, ModelSources, ModelUser, Prediction
 from db.models.users import User
 from job import Space, close_exclusive_run
 from sqlalchemy import not_
@@ -180,21 +181,22 @@ def add_prediction(*_):
         predict_stored_all(session.query(Data.id)
                            .join(SourceUser, SourceUser.source_id == Data.source_id)
                            .join(User, (SourceUser.user_id == User.id))
-                           .join(TagSet, (TagSet.user_id == User.id))
+                           .join(TagSetUser, (TagSetUser.user_id == User.id))
                            .join(Text, Text.data_id == Data.id)
                            .outerjoin(Translation,
                                       (Translation.text_id == Text.id) & (Translation.target_language == 'en'))
                            .join(Time, Time.data_id == Data.id)
                            .join(Fingerprint, Fingerprint.data_id == Data.id)
-                           .join(Model, (Model.user_id == User.id) & (Model.tagset_id == TagSet.id))
+                           .join(Model, Model.tagset_id == TagSetUser.tagset_id)
+                           .join(ModelUser, (ModelUser.model_id == Model.id) & (ModelUser.user_id == User.id))
                            .join(ModelSources,
                                  (ModelSources.model_id == Model.id) & (ModelSources.source_id == Data.source_id))
                            .outerjoin(Prediction,
                                       (Prediction.data_id == Data.id) & (Prediction.model_id == Model.id))
                            .filter(Prediction.id == None)
-                           .add_columns(TagSet.id, Data.source_id, Text.text, Translation.translation,
+                           .add_columns(TagSetUser.tagset_id, Data.source_id, Text.text, Translation.translation,
                                         Fingerprint.fingerprint, Time.time)
-                           .order_by(TagSet.id, Data.source_id)  # ordered for better caching
+                           .order_by(TagSetUser.tagset_id, Data.source_id)  # ordered for better caching
                            .yield_per(1000),
                            session)
     logging.info('... Done')
