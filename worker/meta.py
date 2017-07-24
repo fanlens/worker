@@ -194,9 +194,9 @@ def add_prediction(*_):
                            .outerjoin(Prediction,
                                       (Prediction.data_id == Data.id) & (Prediction.model_id == Model.id))
                            .filter(Prediction.id == None)
-                           .add_columns(TagSetUser.tagset_id, Data.source_id, Text.text, Translation.translation,
+                           .add_columns(Model.id, Text.text, Translation.translation,
                                         Fingerprint.fingerprint, Time.time)
-                           .order_by(TagSetUser.tagset_id, Data.source_id)  # ordered for better caching
+                           .order_by(Model.id)  # ordered for better caching
                            .yield_per(1000),
                            session)
     logging.info('... Done')

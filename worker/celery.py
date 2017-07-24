@@ -34,6 +34,10 @@ app.conf.update(
         'scheduled_brain_maintenance': {
             'task': 'worker.brain.maintenance',
             'schedule': config['maintenance_schedule']
+        },
+        'scheduled_brain_retrain': {
+            'task': 'worker.brain.retrain',
+            'schedule': config['retrain_schedule']
         }
     })
 

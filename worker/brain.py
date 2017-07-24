@@ -8,10 +8,12 @@ import typing
 import uuid
 from functools import lru_cache
 
+from sqlalchemy import text
+
 from brain.feature.fingerprint import get_fingerprint
 from brain.lens import Lens, LensTrainer, model_file_root, model_file_path
 from db import DB, Session, insert_or_ignore
-from db.models.activities import Data, Source, TagSet
+from db.models.activities import Data, Source, TagSet, User
 from db.models.brain import Model, Prediction
 from job import Space, close_exclusive_run
 
@@ -79,8 +81,7 @@ def group_by_source_id(data: typing.Iterable[Data]) -> typing.Iterable[typing.Tu
     return itertools.groupby(data, key=lambda datum: datum.source.id)
 
 
-def predict_buffered(tagset_id, source_id, buffer):
-    model_id = best_model_for_source_by_id(tagset_id, source_id)
+def predict_buffered(model_id, buffer):
     if model_id:
         classifier = get_classifier(model_id)
         buffer_ids, buffer_data = zip(*buffer)
@@ -91,41 +92,46 @@ def predict_buffered(tagset_id, source_id, buffer):
         # logging.error(list(zip(buffer_ids, predictions)))
         return zip(buffer_ids, predictions), model_id
     else:
-        logging.info("No model for tagset: %d, source: %d" % (tagset_id, source_id))
+        logging.info("No model for with id: %s" % str(model_id))
         return [], None
 
 
 def predict_stored_all(data: typing.Iterable, session: Session):
     """works best if sorted by tagset id and source id"""
     prediction_group_size = 200
-    current_identifier = (None, None)
+    current_identifier = None
     buffer = []
 
     def flush_predictions():
-        buffer_tagset_id, buffer_source_id = current_identifier
-        if buffer_tagset_id is None or buffer_source_id is None:
+        if current_identifier is None:
             buffer.clear()
             return
-        logging.info("Flushing %d predicitions for tagset: %d, source_id: %d" % (
-            len(buffer), buffer_tagset_id, buffer_source_id))
-        predictions, model_id = predict_buffered(buffer_tagset_id, buffer_source_id, buffer)
-        for insert_id, insert_prediction in predictions:
-            insert_or_ignore(session, Prediction(data_id=insert_id, model_id=model_id, prediction=insert_prediction))
+        logging.info("Flushing %d predicitions for model id: %s" % (len(buffer), str(current_identifier)))
+        insert_predictions, insert_model_id = predict_buffered(current_identifier, buffer)
+        for insert_id, insert_prediction in insert_predictions:
+            insert_or_ignore(session, Prediction(
+                data_id=insert_id,
+                model_id=insert_model_id,
+                prediction=insert_prediction))
         logging.info("Done flushing")
 
-    for data_id, tagset_id, source_id, text, translation, fingerprint, time in data:
-        if (tagset_id, source_id) != current_identifier or len(buffer) >= prediction_group_size:
+    for data_id, model_id, text, translation, fingerprint, time in data:
+        if model_id != current_identifier or len(buffer) >= prediction_group_size:
             flush_predictions()
             buffer.clear()
-            current_identifier = (tagset_id, source_id)
+            current_identifier = model_id
         buffer.append((data_id, (translation or text, fingerprint, time)))
     flush_predictions()
     session.commit()
 
 
-@exclusive_task(app, Space.BRAIN, trail=True, ignore_result=True, bind=True)
-def train_model(self, tagset_id: int, source_ids: tuple = tuple(), n_estimators: int = 10, _params: dict = None,
-                _score: float = 0.0):
+def _train_model(user_id: int,
+                 tagset_id: int,
+                 source_ids: tuple = tuple(),
+                 n_estimators: int = 10,
+                 _params: dict = None,
+                 _score: float = 0.0,
+                 progress=None):
     assert tagset_id and source_ids
     assert n_estimators
     if not 0 < n_estimators <= 1000:
@@ -133,9 +139,21 @@ def train_model(self, tagset_id: int, source_ids: tuple = tuple(), n_estimators:
     with _db.ctx() as session:
         tagset = session.query(TagSet).get(tagset_id)
         sources = session.query(Source).filter(Source.id.in_(tuple(source_ids))).all()
-        factory = LensTrainer(tagset, sources, progress=ProgressCallback(self))
+        user = session.query(User).get(user_id)
+        factory = LensTrainer(user, tagset, sources, progress=progress)
         lens = factory.train(n_estimators=n_estimators, _params=_params, _score=_score)
         return str(factory.persist(lens, session))
+
+
+@exclusive_task(app, Space.BRAIN, trail=True, ignore_result=True, bind=True)
+def train_model(self, user_id: int, tagset_id: int, source_ids: tuple, n_estimators: int, _params: dict, _score: float):
+    _train_model(user_id=user_id,
+                 tagset_id=tagset_id,
+                 source_ids=source_ids,
+                 n_estimators=n_estimators,
+                 _params=_params,
+                 _score=_score,
+                 progress=ProgressCallback(self))
 
 
 @app.task(bind=True)
@@ -154,6 +172,70 @@ def maintenance(self):
     logging.info("... Done Brain maintenance")
 
 
+def select_retrain_model_ids() -> set:
+    with _db.ctx() as session:
+        return session.execute(text('''
+WITH modles_by_user_tagset_source_trained AS (
+    SELECT model.id, model.created_by_user_id, model.tagset_id, jsonb_agg(DISTINCT src_mdl.source_id ORDER BY src_mdl.source_id) AS sources, model.trained_ts
+    FROM activity.model AS model
+    JOIN activity.source_model AS src_mdl ON model.id = src_mdl.model_id
+    GROUP BY model.id, model.created_by_user_id, model.id, model.trained_ts
+),
+current_models AS (
+    SELECT created_by_user_id, tagset_id, sources, max(trained_ts) AS trained_ts
+    FROM modles_by_user_tagset_source_trained
+    GROUP BY created_by_user_id, tagset_id, sources),
+relevant_data AS (
+    SELECT model.id AS model_id, dat.id AS data_id, dat.crawled_ts AS crawled_ts, model.trained_ts AS trained_ts
+    FROM activity.data AS dat
+    JOIN activity.language AS lang ON lang.data_id = dat.id
+    JOIN activity.text AS text ON text.data_id = dat.id
+    LEFT OUTER JOIN activity.translation AS trans ON trans.text_id = text.id
+    JOIN activity.source_model AS sm ON sm.source_id = dat.source_id
+    JOIN activity.model AS model ON model.id = sm.model_id
+    WHERE (lang.language = 'en' OR trans.target_language = 'en') 
+),
+outdated_models AS (
+    SELECT relevant_data.model_id AS id
+    FROM relevant_data
+    WHERE relevant_data.crawled_ts > relevant_data.trained_ts
+    GROUP BY relevant_data.model_id
+    HAVING count(*) > 50
+    UNION
+    SELECT relevant_data.model_id AS id
+    FROM relevant_data
+    JOIN activity.tagging AS tagging ON tagging.data_id = relevant_data.data_id
+    WHERE tagging.tagging_ts > relevant_data.trained_ts
+    GROUP BY relevant_data.model_id
+    HAVING count(*) > 50 OR min(tagging.tagging_ts) < (now() - INTERVAL '4 hours')
+)
+SELECT created_by_user_id, tagset_id, sources, trained_ts
+FROM modles_by_user_tagset_source_trained AS models
+JOIN outdated_models AS outdated ON models.id = outdated.id
+INTERSECT
+SELECT * FROM current_models'''))
+
+
+@exclusive_task(app, Space.BRAIN, trail=True, ignore_result=True, bind=True)
+def retrain(self):
+    logging.info("Looking for models to be retrained... ")
+    for user_id, tagset_id, source_ids, _ in select_retrain_model_ids():
+        logging.info(
+            "\tRetraining model for user: %d, tagset: %d, sources: %s..." % (user_id, tagset_id, str(source_ids)))
+        # todo use group()
+        _train_model(user_id, tagset_id, tuple(source_ids))
+        logging.info(
+            "\t... Done retraining model for user: %d, tagset: %d, sources: %s" % (user_id, tagset_id, str(source_ids)))
+    logging.info("... Done retraining models")
+
+
 if __name__ == "__main__":
-    print(best_model_for_source_by_id(1))
-    print(best_model_for_source_by_id(2))
+    logging.getLogger().setLevel(logging.DEBUG)
+    logging.getLogger().addHandler(logging.StreamHandler())
+    # retrain()
+    from db.models.activities import User
+    from db.models.brain import ModelSources, Model
+
+    with _db.ctx() as session:
+        current_user = session.query(User).get(5)
+        session.query()
