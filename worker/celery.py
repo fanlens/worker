@@ -38,6 +38,10 @@ app.conf.update(
         'scheduled_brain_retrain': {
             'task': 'worker.brain.retrain',
             'schedule': config['retrain_schedule']
+        },
+        'scheduled_scrape_recrawl': {
+            'task': 'worker.scrape.recrawl',
+            'schedule': config['recrawl_schedule']
         }
     })
 

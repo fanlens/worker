@@ -2,13 +2,17 @@
 # -*- coding: utf-8 -*-
 
 import logging
+from celery import group
+
 import requests
 from bs4 import BeautifulSoup
-
-from sqlalchemy import literal
+from crawler.process import facebook_crawler_process
 from db import DB, insert_or_ignore
-from db.models.scrape import Shortener
+from db.models.scrape import Shortener, CrawlLog, CrawlState
+from sqlalchemy import text
+from job import Space
 
+from . import exclusive_task
 from .celery import app
 
 
@@ -50,8 +54,41 @@ def scrape_meta_for_url(url):
     return insert_id, tags
 
 
+@app.task
+def crawl(source_id):
+    with DB().ctx() as session:
+        session.add(CrawlLog(source_id=source_id, state=CrawlState.START))
+        session.commit()
+        try:
+            process = facebook_crawler_process(source_id, -60)
+            process.start()
+            session.add(CrawlLog(source_id=source_id, state=CrawlState.DONE))
+            session.commit()
+        except Exception:
+            session.add(CrawlLog(source_id=source_id, state=CrawlState.FAIL))
+            session.commit()
+
+
+@exclusive_task(app, Space.CRAWLER, trail=True, ignore_result=True)
+def recrawl():
+    outdated = text('''
+        SELECT * FROM (
+            SELECT DISTINCT ON(src.id)
+                src.id, cl.state, cl.timestamp
+            FROM activity.source AS src
+            LEFT OUTER JOIN activity.crawllog AS cl ON cl.source_id = src.id
+            WHERE src.auto_crawl = TRUE
+            ORDER BY src.id, cl.timestamp DESC
+        ) AS most_recent_per_source
+        WHERE timestamp IS NULL
+            OR (state = 'START' AND timestamp < now() - '8 hours'::INTERVAL) -- timeout
+            OR (state = 'DONE' AND timestamp < now() - '2 hours'::INTERVAL) -- normal schedule
+            OR state = 'FAIL' ''')
+    with DB().ctx() as session:
+        crawl_group = group(crawl.s(source_id) for (source_id, last_state, last_timestamp) in session.execute(outdated))
+    return crawl_group()
+
+
 if __name__ == "__main__":
     logging.getLogger().addHandler(logging.StreamHandler())
-    print(scrape_meta_for_url( 'http://www.miamiherald.com/news/nation-world/article159642739.html'))
-    print(scrape_meta_for_url( 'http://docs.sqlalchemy.org/en/latest/core/tutorial.html#coretutorial-insert-expressions'))
-    print(scrape_meta_for_url( 'https://www.nytimes.com/2017/07/07/briefing/g20-pennsylvania-station-tesla.html?rref=collection%2Fseriescollection%2Fus-morning-briefing&action=click&contentCollection=briefing&region=stream&module=stream_unit&version=latest&contentPlacement=1&pgtype=collection'))
+    print(recrawl())
