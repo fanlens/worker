@@ -1,3 +1,4 @@
+requirements.txt
 gce/key.json
 localhost.pem
 brain/brain/nltk_data
