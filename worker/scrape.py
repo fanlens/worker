@@ -7,7 +7,7 @@ from celery import group
 import requests
 from bs4 import BeautifulSoup
 from crawler.process import facebook_crawler_process
-from db import DB, insert_or_ignore
+from db import get_session, Session, insert_or_ignore
 from db.models.scrape import Shortener, CrawlLog, CrawlState
 from sqlalchemy import text
 from job import Space
@@ -47,7 +47,7 @@ def scrape_meta_for_url(url):
     og_tags = dict((tag, find_or_none(soup, 'meta', 'content', property='og:%s' % tag))
                    for tag in OG_TAGS)
     tags.update(og_tags)
-    with DB().ctx() as session:
+    with get_session() as session:  # type: Session
         result = insert_or_ignore(session, Shortener(**tags))
         session.commit()
         insert_id = result.inserted_primary_key and result.inserted_primary_key[0] or None
@@ -56,7 +56,7 @@ def scrape_meta_for_url(url):
 
 @app.task
 def crawl(source_id):
-    with DB().ctx() as session:
+    with get_session() as session:  # type: Session
         session.add(CrawlLog(source_id=source_id, state=CrawlState.START))
         session.commit()
         try:
@@ -84,7 +84,7 @@ def recrawl():
             OR (state = 'START' AND timestamp < now() - '8 hours'::INTERVAL) -- timeout
             OR (state = 'DONE' AND timestamp < now() - '2 hours'::INTERVAL) -- normal schedule
             OR state = 'FAIL' ''')
-    with DB().ctx() as session:
+    with get_session() as session:  # type: Session
         crawl_group = group(crawl.s(source_id) for (source_id, last_state, last_timestamp) in session.execute(outdated))
     return crawl_group()
 

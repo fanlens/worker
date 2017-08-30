@@ -12,15 +12,13 @@ from sqlalchemy import text
 
 from brain.feature.fingerprint import get_fingerprint
 from brain.lens import Lens, LensTrainer, model_file_root, model_file_path
-from db import DB, Session, insert_or_ignore
+from db import get_session, Session, insert_or_ignore
 from db.models.activities import Data, Source, TagSet, User
 from db.models.brain import Model, Prediction
 from job import Space, close_exclusive_run
 
 from . import ProgressCallback, exclusive_task
 from .celery import app
-
-_db = DB()
 
 
 @lru_cache(maxsize=256)
@@ -30,7 +28,7 @@ def get_classifier(model_id: uuid.UUID) -> Lens:
 
 @lru_cache(maxsize=256)
 def best_model_for_source_by_id(tagset_id: int, source_id: int) -> uuid.UUID:
-    with _db.ctx() as session:
+    with get_session() as session:  # type: Session
         source = session.query(Source).get(source_id)
         assert source
         model = source.models.filter_by(tagset_id=tagset_id).order_by(Model.score, Model.trained_ts).first()
@@ -136,7 +134,7 @@ def _train_model(user_id: int,
     assert n_estimators
     if not 0 < n_estimators <= 1000:
         raise ValueError('invalid estimator count: %d' % n_estimators)
-    with _db.ctx() as session:
+    with get_session() as session:  # type: Session
         tagset = session.query(TagSet).get(tagset_id)
         sources = session.query(Source).filter(Source.id.in_(tuple(source_ids))).all()
         user = session.query(User).get(user_id)
@@ -161,7 +159,7 @@ def maintenance(self):
     logging.info("Beginning Brain maintenance...")
     (_, _, file_ids) = next(os.walk(model_file_root))
     file_ids = set(file_ids)
-    with _db.ctx() as session:
+    with get_session() as session:  # type: Session
         db_ids = set([str(uuid) for (uuid,) in session.query(Model.id)])
         missing_ids = db_ids.difference(file_ids)
         logging.warning('The following model ids are missing the model file: %s' % missing_ids)
@@ -173,7 +171,7 @@ def maintenance(self):
 
 
 def select_retrain_model_ids() -> set:
-    with _db.ctx() as session:
+    with get_session() as session:  # type: Session
         return session.execute(text('''
 WITH modles_by_user_tagset_source_trained AS (
     SELECT model.id, model.created_by_user_id, model.tagset_id, jsonb_agg(DISTINCT src_mdl.source_id ORDER BY src_mdl.source_id) AS sources, model.trained_ts
@@ -236,6 +234,6 @@ if __name__ == "__main__":
     from db.models.activities import User
     from db.models.brain import ModelSources, Model
 
-    with _db.ctx() as session:
+    with get_session() as session:  # type: Session
         current_user = session.query(User).get(5)
         session.query()
