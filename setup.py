@@ -6,14 +6,14 @@
 from setuptools import setup, find_packages
 
 setup(
-    name="worker",
+    name="fanlens-worker",
     version="4.0.0",
     long_description=__doc__,
     packages=find_packages(),
     include_package_data=True,
     install_requires=[
-        'common',  # fanlens
-        'crawler',  # fanlens
+        'fanlens-common',
+        'fanlens-crawler',
 
         'python-dateutil',
         'celery[redis]',
