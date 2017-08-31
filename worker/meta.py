@@ -25,6 +25,7 @@ from .celery import app
 text_extractors = {
     Type.facebook: lambda data: data.data['message'],
     Type.twitter: lambda data: data.data['text'],
+    Type.twitter_dm: lambda data: data.data['message_create']['message_data']['text'],
     Type.generic: lambda data: data.data['text'],
 }
 
@@ -35,7 +36,7 @@ def _extract_text(data: Data) -> Data:
     #     .replace('\b', '')
     #     .encode('ascii', 'ignore')
     #     .decode('utf-8', 'ignore'))
-    text = text_extractors[data.source.type](data)
+    text = text_extractors[Type(data.source.type)](data)
     data.text = Text(text=text)
     return data
 
@@ -58,12 +59,13 @@ time_extractors = {
     Type.facebook: lambda data: dateutil.parser.parse(data.data.get('created_time')),
     Type.twitter: lambda data: datetime.strptime(data.data['created_at'],
                                                  '%a %b %d %H:%M:%S +0000 %Y').replace(tzinfo=simple_utc),
+    Type.twitter_dm: lambda data: datetime.utcfromtimestamp(int(data['created_timestamp'])),
     Type.generic: lambda data: dateutil.parser.parse(data.data.get('created_time')),
 }
 
 
 def _extract_time(data: Data) -> Data:
-    time = time_extractors[data.source.type](data)
+    time = time_extractors[Type(data.source.type)](data)
     data.time = Time(time=time)
     return data
 
