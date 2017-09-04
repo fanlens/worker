@@ -8,7 +8,7 @@ from brain.feature.fingerprint import get_fingerprints
 from brain.feature.language_detect import language_detect
 # from brain.feature.translate import translate
 from brain.feature.translate_microsoft import translate
-from db import DB
+from db import get_session, Session
 from db.models.activities import Data, Fingerprint, Lang, Language, SourceUser, TagSetUser, Text, Time, Translation, \
     Type
 from db.models.brain import Model, ModelSources, ModelUser, Prediction
@@ -25,6 +25,7 @@ from .celery import app
 text_extractors = {
     Type.facebook: lambda data: data.data['message'],
     Type.twitter: lambda data: data.data['text'],
+    Type.twitter_dm: lambda data: data.data['message_create']['message_data']['text'],
     Type.generic: lambda data: data.data['text'],
 }
 
@@ -35,7 +36,7 @@ def _extract_text(data: Data) -> Data:
     #     .replace('\b', '')
     #     .encode('ascii', 'ignore')
     #     .decode('utf-8', 'ignore'))
-    text = text_extractors[data.source.type](data)
+    text = text_extractors[Type(data.source.type)](data)
     data.text = Text(text=text)
     return data
 
@@ -44,7 +45,7 @@ def _extract_text(data: Data) -> Data:
 def extract_text(*_):
     logging.info('Extracting text ...')
     num = 0
-    with DB().ctx() as session:
+    with get_session() as session:  # type: Session
         for datum in session.query(Data).filter(Data.text == None):
             _extract_text(datum)
             num += 1
@@ -58,12 +59,13 @@ time_extractors = {
     Type.facebook: lambda data: dateutil.parser.parse(data.data.get('created_time')),
     Type.twitter: lambda data: datetime.strptime(data.data['created_at'],
                                                  '%a %b %d %H:%M:%S +0000 %Y').replace(tzinfo=simple_utc),
+    Type.twitter_dm: lambda data: datetime.utcfromtimestamp(int(data['created_timestamp'])),
     Type.generic: lambda data: dateutil.parser.parse(data.data.get('created_time')),
 }
 
 
 def _extract_time(data: Data) -> Data:
-    time = time_extractors[data.source.type](data)
+    time = time_extractors[Type(data.source.type)](data)
     data.time = Time(time=time)
     return data
 
@@ -72,7 +74,7 @@ def _extract_time(data: Data) -> Data:
 def extract_time(*_):
     logging.info('Extracting time ...')
     num = 0
-    with DB().ctx() as session:
+    with get_session() as session:  # type: Session
         for datum in session.query(Data).filter(Data.time == None):
             _extract_time(datum)
             num += 1
@@ -96,7 +98,7 @@ def _add_language(data: Data) -> Data:
 def add_language(*_):
     logging.info('Adding language ...')
     num = 0
-    with DB().ctx() as session:
+    with get_session() as session:  # type: Session
         for datum in session.query(Data).filter((Data.text != None) & (Data.language == None)):
             _add_language(datum)
             num += 1
@@ -125,7 +127,7 @@ class TranslationsHandler(object):
 @app.task(trail=True, ignore_result=True)
 def add_translation(*_):
     logging.info('Adding translations ...')
-    with DB().ctx() as session:
+    with get_session() as session:  # type: Session
         entries = (session.query(Data)
                    .join(Text, Text.data_id == Data.id)
                    .filter((Text.translations == None) & not_(Data.language.has(language='en'))))
@@ -163,7 +165,7 @@ class FingerprintHandler(object):
 @app.task(trail=True, ignore_result=True)
 def add_fingerprint(*_):
     logging.info('Adding fingerprints ...')
-    with DB().ctx() as session:
+    with get_session() as session:  # type: Session
         entries = (session.query(Data)
                    .join(Text, Text.data_id == Data.id)
                    .outerjoin(Translation, (Translation.text_id == Text.id))
@@ -177,7 +179,7 @@ def add_fingerprint(*_):
 @app.task(trail=True, ignore_result=True)
 def add_prediction(*_):
     logging.info('Adding predictions ...')
-    with DB().ctx() as session:
+    with get_session() as session:  # type: Session
         predict_stored_all(session.query(Data.id)
                            .join(SourceUser, SourceUser.source_id == Data.source_id)
                            .join(User, (SourceUser.user_id == User.id))
