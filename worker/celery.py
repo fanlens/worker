@@ -17,6 +17,7 @@ app = Celery('fanlens',
 
 # Optional configuration, see the application user guide.
 app.conf.update(
+    CELERYD_FORCE_EXECV=True,
     CELERYD_LOG_FORMAT="[%(asctime)s: %(levelname)s/%(processName)s:%(funcName)s] %(message)s",
     CELERY_IGNORE_RESULT=False,
     CELERY_TRACK_STARTED=True,
