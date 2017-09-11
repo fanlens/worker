@@ -1,2 +1,0 @@
--e 'git+https://${FL_DEPLOY_USER}:${FL_DEPLOY_PASSWORD}@bitbucket.org/fanlens/common.git#egg=common'
--e 'git+https://${FL_DEPLOY_USER}:${FL_DEPLOY_PASSWORD}@bitbucket.org/fanlens/crawler.git#egg=crawler'
