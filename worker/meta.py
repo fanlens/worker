@@ -120,7 +120,8 @@ class TranslationsHandler(object):
         logger.info('Creating translations for %d texts' % len(texts))
         translations = translate(texts)
         for store_entry, translation in zip(buffer, translations):
-            store_entry.text.translations.append(Translation(translation=translation, target_language='en'))
+            if translation:
+                store_entry.text.translations.append(Translation(translation=translation, target_language='en'))
         logger.info('Flushing translations data, %d translations' % len(translations))
         self._session.commit()
 
