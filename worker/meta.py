@@ -1,26 +1,27 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-import logging
 from datetime import datetime
 
 import dateutil.parser
+from celery.utils.log import get_task_logger
+from sqlalchemy import not_
+
 from brain.feature.fingerprint import get_fingerprints
 from brain.feature.language_detect import language_detect
-# from brain.feature.translate import translate
-from brain.feature.translate_microsoft import translate
+from brain.feature.translate import translate
 from db import get_session, Session
 from db.models.activities import Data, Fingerprint, Lang, Language, SourceUser, TagSetUser, Text, Time, Translation, \
     Type
 from db.models.brain import Model, ModelSources, ModelUser, Prediction
 from db.models.users import User
 from job import Space, close_exclusive_run
-from sqlalchemy import not_
 from utils.buffered import Buffered
 from utils.simple_utc import simple_utc
-
 from . import exclusive_task
 from .brain import predict_stored_all
 from .celery import app
+
+logger = get_task_logger(__name__)
 
 text_extractors = {
     Type.facebook: lambda data: data.data['message'],
@@ -43,7 +44,7 @@ def _extract_text(data: Data) -> Data:
 
 @app.task(trail=True, ignore_result=True)
 def extract_text(*_):
-    logging.info('Extracting text ...')
+    logger.info('Extracting text ...')
     num = 0
     with get_session() as session:  # type: Session
         for datum in session.query(Data).filter(Data.text == None):
@@ -52,7 +53,7 @@ def extract_text(*_):
             if not num % 500:
                 session.commit()
         session.commit()
-    logging.info('... Done, added %d texts' % num)
+    logger.info('... Done, added %d texts' % num)
 
 
 time_extractors = {
@@ -72,7 +73,7 @@ def _extract_time(data: Data) -> Data:
 
 @app.task(trail=True, ignore_result=True)
 def extract_time(*_):
-    logging.info('Extracting time ...')
+    logger.info('Extracting time ...')
     num = 0
     with get_session() as session:  # type: Session
         for datum in session.query(Data).filter(Data.time == None):
@@ -81,7 +82,7 @@ def extract_time(*_):
             if not num % 500:
                 session.commit()
         session.commit()
-    logging.info('... Done, added %d times' % num)
+    logger.info('... Done, added %d times' % num)
 
 
 def _add_language(data: Data) -> Data:
@@ -89,14 +90,14 @@ def _add_language(data: Data) -> Data:
         lang = language_detect(data.text.text)
         data.language = Language(language=Lang[lang])
     except KeyError as err:
-        logging.error('couldn\'t lang detect:', data.text.text)
-        logging.exception(err)
+        logger.error('couldn\'t lang detect:', data.text.text)
+        logger.exception(err)
     return data
 
 
 @app.task(trail=True, ignore_result=True)
 def add_language(*_):
-    logging.info('Adding language ...')
+    logger.info('Adding language ...')
     num = 0
     with get_session() as session:  # type: Session
         for datum in session.query(Data).filter((Data.text != None) & (Data.language == None)):
@@ -105,7 +106,7 @@ def add_language(*_):
             if not num % 500:
                 session.commit()
         session.commit()
-    logging.info('... Done, added %d languages' % num)
+    logger.info('... Done, added %d languages' % num)
 
 
 class TranslationsHandler(object):
@@ -116,24 +117,24 @@ class TranslationsHandler(object):
         texts = [entry.text.text for entry in buffer]
         if not texts:
             return
-        logging.info('Creating translations for %d texts' % len(texts))
+        logger.info('Creating translations for %d texts' % len(texts))
         translations = translate(texts)
         for store_entry, translation in zip(buffer, translations):
             store_entry.text.translations.append(Translation(translation=translation, target_language='en'))
-        logging.info('Flushing translations data, %d translations' % len(translations))
+        logger.info('Flushing translations data, %d translations' % len(translations))
         self._session.commit()
 
 
 @app.task(trail=True, ignore_result=True)
 def add_translation(*_):
-    logging.info('Adding translations ...')
+    logger.info('Adding translations ...')
     with get_session() as session:  # type: Session
         entries = (session.query(Data)
                    .join(Text, Text.data_id == Data.id)
                    .filter((Text.translations == None) & not_(Data.language.has(language='en'))))
         buffered = Buffered(entries, TranslationsHandler(session), 10)
         buffered()
-        logging.info('... Done translations')
+        logger.info('... Done translations')
 
 
 class FingerprintHandler(object):
@@ -154,17 +155,17 @@ class FingerprintHandler(object):
         texts = [self._gettext(entry) or "unknown" for entry in buffer]
         if not texts:
             return
-        logging.info('Creating fingerprints for %d texts' % len(texts))
+        logger.info('Creating fingerprints for %d texts' % len(texts))
         fingerprints = [result.positions for result in get_fingerprints(texts)]
         for store_entry, fingerprint in zip(buffer, fingerprints):
             store_entry.fingerprint = Fingerprint(fingerprint=fingerprint)
-        logging.info('Flushing fingerprint data, %d fingerprints' % len(fingerprints))
+        logger.info('Flushing fingerprint data, %d fingerprints' % len(fingerprints))
         self._session.commit()
 
 
 @app.task(trail=True, ignore_result=True)
 def add_fingerprint(*_):
-    logging.info('Adding fingerprints ...')
+    logger.info('Adding fingerprints ...')
     with get_session() as session:  # type: Session
         entries = (session.query(Data)
                    .join(Text, Text.data_id == Data.id)
@@ -173,12 +174,12 @@ def add_fingerprint(*_):
                            (Data.fingerprint == None)))
         buffered = Buffered(entries, FingerprintHandler(session), 500)
         buffered()
-    logging.info('... Done fingerprints')
+    logger.info('... Done fingerprints')
 
 
 @app.task(trail=True, ignore_result=True)
 def add_prediction(*_):
-    logging.info('Adding predictions ...')
+    logger.info('Adding predictions ...')
     with get_session() as session:  # type: Session
         predict_stored_all(session.query(Data.id)
                            .join(SourceUser, SourceUser.source_id == Data.source_id)
@@ -201,7 +202,7 @@ def add_prediction(*_):
                            .order_by(Model.id)  # ordered for better caching
                            .yield_per(1000),
                            session)
-    logging.info('... Done')
+    logger.info('... Done')
 
 
 @app.task(trail=True, ignore_result=True)
@@ -212,24 +213,22 @@ def graciously_release_exclusive_run(run):
 
 @exclusive_task(app, Space.WORKER, trail=True, ignore_result=True)
 def meta_pipeline(*_):
-    logging.info('Starting full meta pipeline workers...')
-    # job_spec = (group(extract_text.s(), extract_time.s())
-    # | add_language.s()
-    ## | add_translation.s()
-    # | add_fingerprint.s()
-    # | add_prediction.s()
-    # | add_prediction.s())
-    # return job_spec()
-    extract_text()
-    extract_time()
-    add_language()
-    # add_translation()
-    add_fingerprint()
-    add_prediction()
-    logging.info('Done meta pipeline workers...')
+    logger.info('Starting full meta pipeline workers...')
+    modules = [
+        ('text', extract_text),
+        ('time', extract_time),
+        ('language', add_language),
+        ('translation', add_translation),
+        ('fingerprint', add_fingerprint),
+        ('prediction', add_prediction),
+    ]
+    for module_key, module_function in modules:
+        # assure correct order
+        if module_key in app.conf['FANLENS_META_MODULES']:
+            module_function()
+
+    logger.info('Done meta pipeline workers...')
 
 
 if __name__ == "__main__":
-    logging.getLogger().setLevel(logging.DEBUG)
-    logging.getLogger().addHandler(logging.StreamHandler())
     meta_pipeline()

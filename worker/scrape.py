@@ -1,19 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
-import logging
-from celery import group
-
 import requests
 from bs4 import BeautifulSoup
+from celery import group
+from celery.utils.log import get_task_logger
+from sqlalchemy import text
+
 from crawler.process import facebook_crawler_process
 from db import get_session, Session, insert_or_ignore
 from db.models.scrape import Shortener, CrawlLog, CrawlState
-from sqlalchemy import text
 from job import Space
-
 from . import exclusive_task
 from .celery import app
+
+logger = get_task_logger(__name__)
 
 
 @app.task
@@ -56,6 +57,7 @@ def scrape_meta_for_url(url):
 
 @app.task
 def crawl(source_id):
+    logger.info("Crawling source: %d..." % source_id)
     with get_session() as session:  # type: Session
         session.add(CrawlLog(source_id=source_id, state=CrawlState.START))
         session.commit()
@@ -67,11 +69,13 @@ def crawl(source_id):
         except Exception:
             session.add(CrawlLog(source_id=source_id, state=CrawlState.FAIL))
             session.commit()
+    logger.info("... Done crawling source: %d" % source_id)
 
 
 @exclusive_task(app, Space.CRAWLER, trail=True, ignore_result=True)
 def recrawl():
-    outdated = text('''
+    logger.info("Starting recrawl...")
+    outdated_sql = text('''
         SELECT * FROM (
             SELECT DISTINCT ON(src.id)
                 src.id, cl.state, cl.timestamp
@@ -85,10 +89,12 @@ def recrawl():
             OR (state = 'DONE' AND timestamp < now() - '2 hours'::INTERVAL) -- normal schedule
             OR state = 'FAIL' ''')
     with get_session() as session:  # type: Session
-        crawl_group = group(crawl.s(source_id) for (source_id, last_state, last_timestamp) in session.execute(outdated))
-    return crawl_group()
+        outdated = list(session.execute(outdated_sql))
+        logger.info("Recrawling outdated sources: " + str(outdated))
+        crawl_group = group(crawl.s(source_id) for (source_id, last_state, last_timestamp) in outdated)
+        logger.info("... Done recrawl")
+        return crawl_group()
 
 
 if __name__ == "__main__":
-    logging.getLogger().addHandler(logging.StreamHandler())
     print(recrawl())
