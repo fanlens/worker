@@ -2,23 +2,24 @@
 # -*- coding: utf-8 -*-
 import datetime
 import itertools
-import logging
 import os
 import typing
 import uuid
 from functools import lru_cache
 
+from celery.utils.log import get_task_logger
 from sqlalchemy import text
 
 from brain.feature.fingerprint import get_fingerprint
 from brain.lens import Lens, LensTrainer, model_file_root, model_file_path
 from db import get_session, Session, insert_or_ignore
-from db.models.activities import Data, Source, TagSet, User
-from db.models.brain import Model, Prediction
-from job import Space, close_exclusive_run
-
+from db.models.activities import Data, Source, TagSet
+from db.models.brain import Prediction
+from job import Space
 from . import ProgressCallback, exclusive_task
 from .celery import app
+
+logger = get_task_logger(__name__)
 
 
 @lru_cache(maxsize=256)
@@ -83,14 +84,14 @@ def predict_buffered(model_id, buffer):
     if model_id:
         classifier = get_classifier(model_id)
         buffer_ids, buffer_data = zip(*buffer)
-        # logging.error(buffer_ids)
-        # logging.error(buffer_data)
+        # logger.error(buffer_ids)
+        # logger.error(buffer_data)
         predictions = classifier.predict_proba(buffer_data)
-        # logging.error(predictions)
-        # logging.error(list(zip(buffer_ids, predictions)))
+        # logger.error(predictions)
+        # logger.error(list(zip(buffer_ids, predictions)))
         return zip(buffer_ids, predictions), model_id
     else:
-        logging.info("No model for with id: %s" % str(model_id))
+        logger.info("No model for with id: %s" % str(model_id))
         return [], None
 
 
@@ -104,14 +105,14 @@ def predict_stored_all(data: typing.Iterable, session: Session):
         if current_identifier is None:
             buffer.clear()
             return
-        logging.info("Flushing %d predicitions for model id: %s" % (len(buffer), str(current_identifier)))
+        logger.info("Flushing %d predicitions for model id: %s" % (len(buffer), str(current_identifier)))
         insert_predictions, insert_model_id = predict_buffered(current_identifier, buffer)
         for insert_id, insert_prediction in insert_predictions:
             insert_or_ignore(session, Prediction(
                 data_id=insert_id,
                 model_id=insert_model_id,
                 prediction=insert_prediction))
-        logging.info("Done flushing")
+        logger.info("Done flushing")
 
     for data_id, model_id, text, translation, fingerprint, time in data:
         if model_id != current_identifier or len(buffer) >= prediction_group_size:
@@ -156,18 +157,18 @@ def train_model(self, user_id: int, tagset_id: int, source_ids: tuple, n_estimat
 
 @app.task(bind=True)
 def maintenance(self):
-    logging.info("Beginning Brain maintenance...")
+    logger.info("Beginning Brain maintenance...")
     (_, _, file_ids) = next(os.walk(model_file_root))
     file_ids = set(file_ids)
     with get_session() as session:  # type: Session
         db_ids = set([str(uuid) for (uuid,) in session.query(Model.id)])
         missing_ids = db_ids.difference(file_ids)
-        logging.warning('The following model ids are missing the model file: %s' % missing_ids)
+        logger.warning('The following model ids are missing the model file: %s' % missing_ids)
         delete_ids = file_ids.difference(db_ids)
-        logging.warning('The following model ids are orphaned and will be deleted: %s' % delete_ids)
+        logger.warning('The following model ids are orphaned and will be deleted: %s' % delete_ids)
         for delete_id in delete_ids:
             os.remove(model_file_path(delete_id))
-    logging.info("... Done Brain maintenance")
+    logger.info("... Done Brain maintenance")
 
 
 def select_retrain_model_ids() -> set:
@@ -216,23 +217,23 @@ SELECT * FROM current_models'''))
 
 @exclusive_task(app, Space.BRAIN, trail=True, ignore_result=True, bind=True)
 def retrain(self):
-    logging.info("Looking for models to be retrained... ")
+    logger.info("Looking for models to be retrained... ")
     for user_id, tagset_id, source_ids, _ in select_retrain_model_ids():
-        logging.info(
+        logger.info(
             "\tRetraining model for user: %d, tagset: %d, sources: %s..." % (user_id, tagset_id, str(source_ids)))
         # todo use group()
         _train_model(user_id, tagset_id, tuple(source_ids))
-        logging.info(
+        logger.info(
             "\t... Done retraining model for user: %d, tagset: %d, sources: %s" % (user_id, tagset_id, str(source_ids)))
-    logging.info("... Done retraining models")
+    logger.info("... Done retraining models")
 
 
 if __name__ == "__main__":
-    logging.getLogger().setLevel(logging.DEBUG)
-    logging.getLogger().addHandler(logging.StreamHandler())
+    logger.getLogger().setLevel(logger.DEBUG)
+    logger.getLogger().addHandler(logger.StreamHandler())
     # retrain()
     from db.models.activities import User
-    from db.models.brain import ModelSources, Model
+    from db.models.brain import Model
 
     with get_session() as session:  # type: Session
         current_user = session.query(User).get(5)
