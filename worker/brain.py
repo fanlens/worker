@@ -13,8 +13,8 @@ from sqlalchemy import text
 from brain.feature.fingerprint import get_fingerprint
 from brain.lens import Lens, LensTrainer, model_file_root, model_file_path
 from db import get_session, Session, insert_or_ignore
-from db.models.activities import Data, Source, TagSet
-from db.models.brain import Prediction
+from db.models.activities import Data, Source, TagSet, User
+from db.models.brain import Model, Prediction
 from job import Space
 from . import ProgressCallback, exclusive_task
 from .celery import app
@@ -232,8 +232,7 @@ if __name__ == "__main__":
     logger.getLogger().setLevel(logger.DEBUG)
     logger.getLogger().addHandler(logger.StreamHandler())
     # retrain()
-    from db.models.activities import User
-    from db.models.brain import Model
+
 
     with get_session() as session:  # type: Session
         current_user = session.query(User).get(5)
