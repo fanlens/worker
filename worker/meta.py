@@ -11,7 +11,7 @@ from brain.feature.language_detect import language_detect
 from brain.feature.translate import translate
 from db import get_session, Session
 from db.models.activities import Data, Fingerprint, Lang, Language, SourceUser, TagSetUser, Text, Time, Translation, \
-    Type
+    Type, SourceFeature
 from db.models.brain import Model, ModelSources, ModelUser, Prediction
 from db.models.users import User
 from job import Space, close_exclusive_run
@@ -131,8 +131,11 @@ def add_translation(*_):
     logger.info('Adding translations ...')
     with get_session() as session:  # type: Session
         entries = (session.query(Data)
+                   .join(SourceFeature, SourceFeature.source_id == Data.source_id)
                    .join(Text, Text.data_id == Data.id)
-                   .filter((Text.translations == None) & not_(Data.language.has(language='en'))))
+                   .filter((Text.translations == None) &
+                           (SourceFeature.feature == 'translate') &
+                           not_(Data.language.has(language='en'))))
         buffered = Buffered(entries, TranslationsHandler(session), 10)
         buffered()
         logger.info('... Done translations')
