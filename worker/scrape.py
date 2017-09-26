@@ -80,8 +80,9 @@ def recrawl():
             SELECT DISTINCT ON(src.id)
                 src.id, cl.state, cl.timestamp
             FROM activity.source AS src
+            JOIN activity.source_feature as src_feature ON src_feature.source_id = src.id
             LEFT OUTER JOIN activity.crawllog AS cl ON cl.source_id = src.id
-            WHERE src.auto_crawl = TRUE
+            WHERE src_feature.feature = 'auto_crawl'
             ORDER BY src.id, cl.timestamp DESC
         ) AS most_recent_per_source
         WHERE timestamp IS NULL
