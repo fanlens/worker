@@ -4,7 +4,6 @@ from datetime import datetime
 
 import dateutil.parser
 from celery.utils.log import get_task_logger
-from sqlalchemy import not_
 
 from brain.feature.fingerprint import get_fingerprints
 from brain.feature.language_detect import language_detect
@@ -133,9 +132,10 @@ def add_translation(*_):
         entries = (session.query(Data)
                    .join(SourceFeature, SourceFeature.source_id == Data.source_id)
                    .join(Text, Text.data_id == Data.id)
+                   .join(Language, Language.data_id == Data.id)
                    .filter((Text.translations == None) &
                            (SourceFeature.feature == 'translate') &
-                           not_(Data.language.has(language='en'))))
+                           (Language.language.in_(Lang.de.name, Lang.es.name))))
         buffered = Buffered(entries, TranslationsHandler(session), 10)
         buffered()
         logger.info('... Done translations')
@@ -147,11 +147,11 @@ class FingerprintHandler(object):
 
     @staticmethod
     def _gettext(entry: Data):
-        if entry.language.language == 'en':
+        if entry.language.language == Lang.en.name:
             return entry.text.text
 
         english_translation = entry.text.translations.filter(
-            Translation.target_language == 'en').one_or_none()  # type: Translation
+            Translation.target_language == Lang.en.name).one_or_none()  # type: Translation
         if english_translation:
             return english_translation.translation
 
@@ -174,7 +174,7 @@ def add_fingerprint(*_):
         entries = (session.query(Data)
                    .join(Text, Text.data_id == Data.id)
                    .outerjoin(Translation, (Translation.text_id == Text.id))
-                   .filter((Data.language.has(language='en') | (Translation.target_language == 'en')) &
+                   .filter((Data.language.has(language=Lang.en.name) | (Translation.target_language == Lang.en.name)) &
                            (Data.fingerprint == None)))
         buffered = Buffered(entries, FingerprintHandler(session), 500)
         buffered()
@@ -191,7 +191,7 @@ def add_prediction(*_):
                            .join(TagSetUser, (TagSetUser.user_id == User.id))
                            .join(Text, Text.data_id == Data.id)
                            .outerjoin(Translation,
-                                      (Translation.text_id == Text.id) & (Translation.target_language == 'en'))
+                                      (Translation.text_id == Text.id) & (Translation.target_language == Lang.en.name))
                            .join(Time, Time.data_id == Data.id)
                            .join(Fingerprint, Fingerprint.data_id == Data.id)
                            .join(Model, Model.tagset_id == TagSetUser.tagset_id)
