@@ -135,7 +135,7 @@ def add_translation(*_):
                    .join(Language, Language.data_id == Data.id)
                    .filter((Text.translations == None) &
                            (SourceFeature.feature == 'translate') &
-                           (Language.language.in_(Lang.de.name, Lang.es.name))))
+                           (Language.language.in_((Lang.de.name, Lang.es.name)))))
         buffered = Buffered(entries, TranslationsHandler(session), 10)
         buffered()
         logger.info('... Done translations')
