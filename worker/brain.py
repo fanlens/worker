@@ -1,45 +1,68 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+"""`Celery` tasks related to training and usage of brain/machine learning models"""
 import datetime
 import itertools
 import os
-import typing
 import uuid
 from functools import lru_cache
+from typing import Optional, List, Dict, Union, Iterable, Any, Tuple, NamedTuple
 
 from celery.utils.log import get_task_logger
-from sqlalchemy import text
+import sqlalchemy
+from sqlalchemy.orm import Session
 
-from brain.feature.fingerprint import get_fingerprint
-from brain.lens import Lens, LensTrainer, model_file_root, model_file_path
-from db import get_session, Session, insert_or_ignore
+from brain.feature.fingerprint import get_fingerprint, TFingerprint
+from brain.lens import Sample, TPrediction, Lens, LensTrainer, model_file_root, model_file_path
+from db import get_session, insert_or_ignore
 from db.models.activities import Data, Source, TagSet, User
 from db.models.brain import Model, Prediction
 from job import Space
 from . import ProgressCallback, exclusive_task
 from .celery import app
 
-logger = get_task_logger(__name__)
+_LOGGER = get_task_logger(__name__)
 
 
 @lru_cache(maxsize=256)
 def get_classifier(model_id: uuid.UUID) -> Lens:
+    """
+    :param model_id: the id of the `Model`
+    :return: the classifier for the provided `Model`
+    """
     return model_id and Lens.load_from_id(model_id)
 
 
 @lru_cache(maxsize=256)
-def best_model_for_source_by_id(tagset_id: int, source_id: int) -> uuid.UUID:
-    with get_session() as session:  # type: Session
+def best_model_for_source_by_id(tagset_id: int, source_id: int) -> Optional[uuid.UUID]:
+    """
+    Select the best model for the `TagSet` / `Source` combination
+    :param tagset_id: id of the `TagSet`
+    :param source_id: id of the `Source`
+    :return: id of best model
+    """
+    with get_session() as session:
         source = session.query(Source).get(source_id)
         assert source
         model = source.models.filter_by(tagset_id=tagset_id).order_by(Model.score, Model.trained_ts).first()
         if not model:
             model = session.query(Model).filter_by(tagset_id=tagset_id).order_by(Model.score, Model.trained_ts).first()
-        return model and model.id
+        return model.id if model else None
 
 
 @app.task
-def predict_text(model_id: uuid.UUID, text, fingerprint=None, created_time=None):
+def predict_text(model_id: uuid.UUID,
+                 text: str,
+                 fingerprint: Optional[TFingerprint] = None,
+                 created_time: Optional[datetime.datetime] = None) -> List[TPrediction]:
+    """
+    Get a prediction for the provided text.
+    :param model_id: id of the `Model` to use
+    :param text: the text
+    :param fingerprint: a retina fingerprint. Optional, can be computed on demand
+    :param created_time: when was the text created? Optional, defaults to now
+    :return: the prediction for the text
+    """
     assert model_id
     assert text
     # if not is_english(text):
@@ -49,12 +72,19 @@ def predict_text(model_id: uuid.UUID, text, fingerprint=None, created_time=None)
     if not created_time:
         created_time = datetime.datetime.utcnow()
     classifier = get_classifier(model_id=model_id)
-    prediction = list(classifier.predict_proba([(text, fingerprint, created_time)]))[0]
+    prediction = list(classifier.predict_proba([(text, fingerprint, created_time)]))[0]  # type: List[TPrediction]
     return prediction
 
 
 @app.task
-def predict_stored(model_id: uuid.UUID, data: Data):
+def predict_stored(model_id: uuid.UUID, data: Data) -> Dict[str, Union[int, List[TPrediction]]]:
+    """
+    Generate a prediction of a stored `Data`
+
+    :param model_id: id of the `Model` to use
+    :param data: the `Data` object
+    :return: the prediction
+    """
     assert data.text
     assert data.language
     assert data.fingerprint
@@ -67,72 +97,108 @@ def predict_stored(model_id: uuid.UUID, data: Data):
                                                      data.time.time))
 
 
-def grouper(iterable: typing.Iterable[typing.Any],
-            n: int, fillvalue: typing.Any = None) -> typing.Iterable[typing.Iterable[typing.Any]]:
-    """Collect data into fixed-length chunks or blocks"""
-    # https://docs.python.org/3/library/itertools.html
-    # grouper('ABCDEFG', 3, 'x') --> ABC DEF Gxx"
-    args = [iter(iterable)] * n
+def grouper(iterable: Iterable[Any],
+            group_size: int,
+            fillvalue: Optional[Any] = None) -> Iterable[Iterable[Any]]:
+    """
+    Collect data into fixed-length chunks or blocks
+    https://docs.python.org/3/library/itertools.html
+    e.g. grouper('ABCDEFG', 3, 'x') --> ABC DEF Gxx"
+    :param iterable: the source iterable
+    :param group_size: size of the groups
+    :param fillvalue: appended to the end
+    :return: an Iterable consisting of groups of Iterables sourced from the provided iterable
+    """
+    args = [iter(iterable)] * group_size
     return itertools.zip_longest(*args, fillvalue=fillvalue)
 
 
-def group_by_source_id(data: typing.Iterable[Data]) -> typing.Iterable[typing.Tuple[int, typing.Iterable[Data]]]:
-    return itertools.groupby(data, key=lambda datum: datum.source.id)
+def _source_id_getter(datum: Data) -> int:
+    source_id = datum.source_id  # type: int
+    return source_id
 
 
-def predict_buffered(model_id, buffer):
+def group_by_source_id(data: Iterable[Data]) -> Iterable[Tuple[int, Iterable[Data]]]:
+    """
+    :param data: an iterable source of `Data`
+    :return: grouped by the source ids of the `Data`
+    """
+    grouped_iter = itertools.groupby(data, key=_source_id_getter)  # type: Iterable[Tuple[int, Iterable[Data]]]
+    return grouped_iter
+
+
+def predict_buffered(model_id: uuid.UUID, buffer: List[Tuple[int, Sample]]) \
+        -> Tuple[Iterable[Tuple[int, List[TPrediction]]], Union[uuid.UUID, None]]:
+    """
+    Perform predictions for an indexed buffer of samples.
+    :param model_id: model to use
+    :param buffer: list of samples with index
+    :return: indexed list of predictions and the used model_id
+    """
     if model_id:
         classifier = get_classifier(model_id)
         buffer_ids, buffer_data = zip(*buffer)
-        # logger.error(buffer_ids)
-        # logger.error(buffer_data)
         predictions = classifier.predict_proba(buffer_data)
-        # logger.error(predictions)
-        # logger.error(list(zip(buffer_ids, predictions)))
-        return zip(buffer_ids, predictions), model_id
-    else:
-        logger.info("No model for with id: %s" % str(model_id))
-        return [], None
+        predictions_with_id = zip(buffer_ids, predictions)
+        return predictions_with_id, model_id
+
+    _LOGGER.info("No model with id: %s", str(model_id))
+    return [], None
 
 
-def predict_stored_all(data: typing.Iterable, session: Session):
-    """works best if sorted by tagset id and source id"""
+def predict_stored_all(data: Iterable[Data], session: Session) -> None:
+    """
+    Add prediction to all stored `Data`
+    works best if sorted by tagset id and source id
+    :param data: source of `Data` objects
+    :param session: the `Session` the `Data` objects are bound to
+    """
     prediction_group_size = 200
     current_identifier = None
-    buffer = []
+    buffer = []  # type: List[Sample]
 
-    def flush_predictions():
+    def flush_predictions() -> None:
+        """flush the predictions to the database"""
         if current_identifier is None:
             buffer.clear()
             return
-        logger.info("Flushing %d predicitions for model id: %s" % (len(buffer), str(current_identifier)))
+        _LOGGER.info("Flushing %d predicitions for model id: %s", len(buffer), str(current_identifier))
         insert_predictions, insert_model_id = predict_buffered(current_identifier, buffer)
         for insert_id, insert_prediction in insert_predictions:
             insert_or_ignore(session, Prediction(
                 data_id=insert_id,
                 model_id=insert_model_id,
                 prediction=insert_prediction))
-        logger.info("Done flushing")
+        _LOGGER.info("Done flushing")
 
     for data_id, model_id, text, translation, fingerprint, time in data:
         if model_id != current_identifier or len(buffer) >= prediction_group_size:
             flush_predictions()
             buffer.clear()
             current_identifier = model_id
-        buffer.append((data_id, (translation or text, fingerprint, time)))
+        buffer.append((data_id, Sample(translation or text, fingerprint, time)))
     flush_predictions()
     session.commit()
 
 
 def _train_model(user_id: int,
                  tagset_id: int,
-                 source_ids: tuple = tuple(),
-                 n_estimators: int = 10,
-                 _params: dict = None,
-                 _score: float = 0.0,
-                 progress=None):
+                 source_ids: Iterable[int],
+                 n_estimators: int,
+                 _params: Optional[Dict[str, Any]],
+                 _score: float,
+                 progress: Optional[ProgressCallback] = None) -> str:
+    """
+    :param user_id: the creating user id
+    :param tagset_id: the tagset id
+    :param source_ids: the source ids
+    :param n_estimators: how many estimators to use for the estimator bag
+    :param progress: an optional progress callback to update state
+    :param _params: don't search for params and use provided
+    :param _score: provide a score for fast training mode
+    :return: stringified model id
+    """
     assert tagset_id and source_ids
-    assert n_estimators
     if not 0 < n_estimators <= 1000:
         raise ValueError('invalid estimator count: %d' % n_estimators)
     with get_session() as session:  # type: Session
@@ -145,7 +211,23 @@ def _train_model(user_id: int,
 
 
 @exclusive_task(app, Space.BRAIN, trail=True, ignore_result=True, bind=True)
-def train_model(self, user_id: int, tagset_id: int, source_ids: tuple, n_estimators: int, _params: dict, _score: float):
+def train_model(self: app.Task,
+                user_id: int,
+                tagset_id: int,
+                source_ids: Iterable[int],
+                n_estimators: int = 10,
+                _params: Optional[Dict[str, Any]] = None,
+                _score: float = 0.0) -> None:
+    """
+    Train a model.
+    :param self: bound task
+    :param user_id: the creating user id
+    :param tagset_id: the tagset id
+    :param source_ids: the source ids
+    :param n_estimators: how many estimators to use for the estimator bag
+    :param _params: don't search for params and use provided
+    :param _score: provide a score for fast training mode
+    """
     _train_model(user_id=user_id,
                  tagset_id=tagset_id,
                  source_ids=source_ids,
@@ -155,25 +237,28 @@ def train_model(self, user_id: int, tagset_id: int, source_ids: tuple, n_estimat
                  progress=ProgressCallback(self))
 
 
-@app.task(bind=True)
-def maintenance(self):
-    logger.info("Beginning Brain maintenance...")
-    (_, _, file_ids) = next(os.walk(model_file_root))
-    file_ids = set(file_ids)
+@app.task()
+def maintenance() -> None:
+    """
+    Run maintenance job for brain: clean up db entries/model ids no longer in use
+    """
+    _LOGGER.info("Beginning Brain maintenance...")
+    (_, _, file_id_list) = next(os.walk(model_file_root))
+    file_ids = set(file_id_list)
     with get_session() as session:  # type: Session
-        db_ids = set([str(uuid) for (uuid,) in session.query(Model.id)])
+        db_ids = set([str(model_id) for (model_id,) in session.query(Model.id)])
         missing_ids = db_ids.difference(file_ids)
-        logger.warning('The following model ids are missing the model file: %s' % missing_ids)
+        _LOGGER.warning('The following model ids are missing the model file: %s', missing_ids)
         delete_ids = file_ids.difference(db_ids)
-        logger.warning('The following model ids are orphaned and will be deleted: %s' % delete_ids)
+        _LOGGER.warning('The following model ids are orphaned and will be deleted: %s', delete_ids)
         for delete_id in delete_ids:
             os.remove(model_file_path(delete_id))
-    logger.info("... Done Brain maintenance")
+    _LOGGER.info("... Done Brain maintenance")
 
 
-def select_retrain_model_ids() -> set:
-    with get_session() as session:  # type: Session
-        return session.execute(text('''
+_RetrainModels = NamedTuple('_RetrainModels', [('user_id', int), ('tagset_id', int), ('source_ids', Iterable[int]),
+                                               ('trained_ts', datetime.datetime)])
+_RETRAIN_MODELS_SQL = sqlalchemy.text('''
 WITH modles_by_user_tagset_source_trained AS (
     SELECT model.id, model.created_by_user_id, model.tagset_id, jsonb_agg(DISTINCT src_mdl.source_id ORDER BY src_mdl.source_id) AS sources, model.trained_ts
     FROM activity.model AS model
@@ -212,28 +297,30 @@ SELECT created_by_user_id, tagset_id, sources, trained_ts
 FROM modles_by_user_tagset_source_trained AS models
 JOIN outdated_models AS outdated ON models.id = outdated.id
 INTERSECT
-SELECT * FROM current_models'''))
+SELECT * FROM current_models''')
+
+
+def _select_retrain_model_params() -> Iterable[_RetrainModels]:
+    """
+    Select all models in need for retraining.
+    :return: a list of model params to retrain
+    """
+    with get_session() as session:
+        return (_RetrainModels(**row) for row in session.execute(_RETRAIN_MODELS_SQL))
 
 
 @exclusive_task(app, Space.BRAIN, trail=True, ignore_result=True, bind=True)
-def retrain(self):
-    logger.info("Looking for models to be retrained... ")
-    for user_id, tagset_id, source_ids, _ in select_retrain_model_ids():
-        logger.info(
-            "\tRetraining model for user: %d, tagset: %d, sources: %s..." % (user_id, tagset_id, str(source_ids)))
+def retrain(self: app.Task) -> None:
+    """
+    Retrain outdated models in need for retraining
+    :param self: bound task
+    """
+    _LOGGER.info("Looking for models to be retrained... ")
+    for user_id, tagset_id, source_ids, _ in _select_retrain_model_params():
+        _LOGGER.info(
+            "\tRetraining model for user: %d, tagset: %d, sources: %s...", user_id, tagset_id, str(source_ids))
         # todo use group()
-        _train_model(user_id, tagset_id, tuple(source_ids))
-        logger.info(
-            "\t... Done retraining model for user: %d, tagset: %d, sources: %s" % (user_id, tagset_id, str(source_ids)))
-    logger.info("... Done retraining models")
-
-
-if __name__ == "__main__":
-    logger.getLogger().setLevel(logger.DEBUG)
-    logger.getLogger().addHandler(logger.StreamHandler())
-    # retrain()
-
-
-    with get_session() as session:  # type: Session
-        current_user = session.query(User).get(5)
-        session.query()
+        train_model(self, user_id, tagset_id, tuple(source_ids))
+        _LOGGER.info(
+            "\t... Done retraining model for user: %d, tagset: %d, sources: %s", user_id, tagset_id, str(source_ids))
+    _LOGGER.info("... Done retraining models")
