@@ -4,7 +4,7 @@
 """`Celery` app reference and setup"""
 
 from celery import Celery
-from config import get_config
+from common.config import get_config
 
 _CONFIG = get_config()
 

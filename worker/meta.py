@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """`Celery` tasks related to extracting meta data of stored `Data`"""
 from datetime import datetime
-from typing import Iterable, Any, Optional  # for comment style type hinting pylint: disable=unused-import
+from typing import Iterable, Any, Optional
 
 import dateutil.parser
 from celery.utils.log import get_task_logger
@@ -10,14 +10,14 @@ from celery.utils.log import get_task_logger
 from brain.feature.fingerprint import get_fingerprints
 from brain.feature.language_detect import language_detect
 from brain.feature.translate import translate
-from db import get_session, Session
-from db.models.activities import Data, Fingerprint, Lang, Language, SourceUser, TagSetUser, Text, Time, Translation, \
-    Type, SourceFeature
-from db.models.brain import Model, ModelSources, ModelUser, Prediction
-from db.models.users import User
-from job import Space
-from utils.buffered import Buffered
-from utils.simple_utc import SimpleUTC
+from common.db import get_session, Session
+from common.db.models.activities import Data, Fingerprint, Lang, Language, SourceUser, TagSetUser, Text, Time, \
+    Translation, Type, SourceFeature
+from common.db.models.brain import Model, ModelSources, ModelUser, Prediction
+from common.db.models.users import User
+from common.job import Space
+from common.utils.buffered import Buffered
+from common.utils.simple_utc import SimpleUTC
 from . import exclusive_task
 from .brain import predict_stored_all
 from .celery import app
@@ -58,7 +58,8 @@ def extract_text(*_: Any) -> None:
     """Task that extracts text from stored data"""
     _LOGGER.info('Extracting text ...')
     num = 0
-    with get_session() as session:  # type: Session
+    session: Session
+    with get_session() as session:
         for datum in session.query(Data).outerjoin(Text).filter(Text.id.is_(None)):
             _extract_text(datum)
             num += 1
@@ -79,7 +80,8 @@ def extract_time(*_: Any) -> None:
     """Task that extracts creation time from stored data"""
     _LOGGER.info('Extracting time ...')
     num = 0
-    with get_session() as session:  # type: Session
+    session: Session
+    with get_session() as session:
         for datum in session.query(Data).outerjoin(Time).filter(Time.id.is_(None)):
             _extract_time(datum)
             num += 1
@@ -104,7 +106,8 @@ def add_language(*_: Any) -> None:
     """Task that detects language of the text"""
     _LOGGER.info('Adding language ...')
     num = 0
-    with get_session() as session:  # type: Session
+    session: Session
+    with get_session() as session:
         for datum in session.query(Data).join(Text).outerjoin(Language).filter(Language.id.is_(None)):
             _add_language(datum)
             num += 1
@@ -144,7 +147,8 @@ def add_translation(*_: Any) -> None:
     Attention: Needs to be enabled as a source feature
     """
     _LOGGER.info('Adding translations ...')
-    with get_session() as session:  # type: Session
+    session: Session
+    with get_session() as session:
         entries = (session.query(Data)
                    .join(SourceFeature, SourceFeature.source_id == Data.source_id)
                    .join(Text, Text.data_id == Data.id)
@@ -173,7 +177,7 @@ class _FingerprintHandler(object):
         :param entry: the data entry
         :raises ValueError, if no english text can be provided
         """
-        entry_text = entry.text.text  # type: str
+        entry_text: str = entry.text.text
         if entry_text is None:
             raise ValueError('Data entry %s has no text' % entry.id)
 
@@ -181,8 +185,8 @@ class _FingerprintHandler(object):
         if language == Lang.en:
             return entry_text
 
-        english_translation = entry.text.translations.filter(
-            Translation.target_language == Lang.en.name).one_or_none()  # type: Optional[Translation]
+        english_translation: Optional[Translation] = entry.text.translations.filter(
+            Translation.target_language == Lang.en.name).one_or_none()
         if english_translation:
             return english_translation.translation
         else:
@@ -196,10 +200,10 @@ class _FingerprintHandler(object):
         if not texts:
             return
         _LOGGER.info('Creating fingerprints for %d texts', len(texts))
-        fingerprints = get_fingerprints(texts)
+        fingerprints = list(get_fingerprints(texts))
         for store_entry, fingerprint in zip(buffer, fingerprints):
             store_entry.fingerprint = Fingerprint(fingerprint=fingerprint)
-        _LOGGER.info('Flushing fingerprint data, %d fingerprints', len(list(fingerprints)))
+        _LOGGER.info('Flushing fingerprint data, %d fingerprints', len(fingerprints))
         self._session.commit()
 
 
@@ -207,7 +211,8 @@ class _FingerprintHandler(object):
 def add_fingerprint(*_: Any) -> None:
     """Task that adds fingerprints to stored `Data`."""
     _LOGGER.info('Adding fingerprints ...')
-    with get_session() as session:  # type: Session
+    session: Session
+    with get_session() as session:
         entries = (session.query(Data)
                    .join(Text, Text.data_id == Data.id)
                    .outerjoin(Translation, (Translation.text_id == Text.id))
@@ -223,7 +228,8 @@ def add_fingerprint(*_: Any) -> None:
 def add_prediction(*_: Any) -> None:
     """Task that adds `Predcition` to stored `Data`."""
     _LOGGER.info('Adding predictions ...')
-    with get_session() as session:  # type: Session
+    session: Session
+    with get_session() as session:
         predict_stored_all(session.query(Data.id)
                            .join(SourceUser, SourceUser.source_id == Data.source_id)
                            .join(User, (SourceUser.user_id == User.id))

@@ -6,14 +6,14 @@ from typing import Tuple, Dict, Optional
 
 import requests
 from bs4 import BeautifulSoup
-from celery import group
 from celery.utils.log import get_task_logger
 from sqlalchemy import text
 
+from celery import group
+from common.db import get_session, insert_or_ignore
+from common.db.models.scrape import Shortener, CrawlLog, CrawlState
+from common.job import Space
 from crawler.process import facebook_crawler_process
-from db import get_session, insert_or_ignore
-from db.models.scrape import Shortener, CrawlLog, CrawlState
-from job import Space
 from . import exclusive_task
 from .celery import app
 
@@ -45,7 +45,7 @@ def find_or_none(soup: BeautifulSoup, elem: str, value: str, **attrs: str) -> Op
     :return: the extracted value
     """
     tag = soup.find(elem, attrs=attrs)
-    tag_value = tag.get(value) if tag else None  # type: Optional[str]
+    tag_value: Optional[str] = tag.get(value) if tag else None
     return tag_value
 
 
@@ -58,10 +58,10 @@ def scrape_meta_for_url(url: str) -> Tuple[int, Dict[str, Optional[str]]]:
     html_doc = fetch_url_content(url)
     soup = BeautifulSoup(html_doc, 'html.parser')
 
-    tags = dict(
+    tags: Dict[str, Optional[str]] = dict(
         orig_source=find_or_none(soup, 'link', 'href', rel='original-source'),
         description=find_or_none(soup, 'meta', 'content', name='description'),
-        canonical=find_or_none(soup, 'link', 'href', rel='canonical'))  # type: Dict[str, Optional[str]]
+        canonical=find_or_none(soup, 'link', 'href', rel='canonical'))
 
     twitter_tags = dict((tag, find_or_none(soup, 'meta', 'content', name='twitter:%s' % tag))
                         for tag in _TWITTER_TAGS)

@@ -6,18 +6,19 @@ import itertools
 import os
 import uuid
 from functools import lru_cache
-from typing import Optional, List, Dict, Union, Iterable, Any, Tuple, NamedTuple
+from typing import Optional, List, Dict, Union, Iterable, Any, Tuple, NamedTuple, cast
 
-from celery.utils.log import get_task_logger
 import sqlalchemy
+from celery.utils.log import get_task_logger
 from sqlalchemy.orm import Session
 
 from brain.feature.fingerprint import get_fingerprint, TFingerprint
-from brain.lens import Sample, ScoredPrediction, TScoredPredictionSet, Lens, LensTrainer, MODEL_FILE_ROOT, model_file_path
-from db import get_session, insert_or_ignore
-from db.models.activities import Data, Source, TagSet, User
-from db.models.brain import Model, Prediction
-from job import Space
+from brain.lens import Sample, ScoredPrediction, TScoredPredictionSet, Lens, LensTrainer, MODEL_FILE_ROOT, \
+    model_file_path
+from common.db import get_session, insert_or_ignore
+from common.db.models.activities import Data, Source, TagSet, User
+from common.db.models.brain import Model, Prediction
+from common.job import Space
 from . import ProgressCallback, exclusive_task
 from .celery import app
 
@@ -72,7 +73,7 @@ def predict_text(model_id: uuid.UUID,
     if not created_time:
         created_time = datetime.datetime.utcnow()
     classifier = get_classifier(model_id=model_id)
-    prediction = list(classifier.predict_proba([(text, fingerprint, created_time)]))[0]  # type: TScoredPredictionSet
+    prediction: TScoredPredictionSet = next(iter(classifier.predict_proba([(text, fingerprint, created_time)])))
     return prediction
 
 
@@ -114,8 +115,7 @@ def grouper(iterable: Iterable[Any],
 
 
 def _source_id_getter(datum: Data) -> int:
-    source_id = datum.source_id  # type: int
-    return source_id
+    return cast(int, datum.source_id)
 
 
 def group_by_source_id(data: Iterable[Data]) -> Iterable[Tuple[int, Iterable[Data]]]:
@@ -123,8 +123,7 @@ def group_by_source_id(data: Iterable[Data]) -> Iterable[Tuple[int, Iterable[Dat
     :param data: an iterable source of `Data`
     :return: grouped by the source ids of the `Data`
     """
-    grouped_iter = itertools.groupby(data, key=_source_id_getter)  # type: Iterable[Tuple[int, Iterable[Data]]]
-    return grouped_iter
+    return cast(Iterable[Tuple[int, Iterable[Data]]], itertools.groupby(data, key=_source_id_getter))
 
 
 def predict_buffered(model_id: uuid.UUID, buffer: List[Tuple[int, Sample]]) \
@@ -155,7 +154,7 @@ def predict_stored_all(data: Iterable[Data], session: Session) -> None:
     """
     prediction_group_size = 200
     current_identifier = None
-    buffer = []  # type: List[Sample]
+    buffer: List[Sample] = list()
 
     def flush_predictions() -> None:
         """flush the predictions to the database"""
@@ -201,7 +200,8 @@ def _train_model(user_id: int,
     assert tagset_id and source_ids
     if not 0 < n_estimators <= 1000:
         raise ValueError('invalid estimator count: %d' % n_estimators)
-    with get_session() as session:  # type: Session
+    session: Session
+    with get_session() as session:
         tagset = session.query(TagSet).get(tagset_id)
         sources = session.query(Source).filter(Source.id.in_(tuple(source_ids))).all()
         user = session.query(User).get(user_id)
@@ -245,7 +245,8 @@ def maintenance() -> None:
     _LOGGER.info("Beginning Brain maintenance...")
     (_, _, file_id_list) = next(os.walk(MODEL_FILE_ROOT))
     file_ids = set(file_id_list)
-    with get_session() as session:  # type: Session
+    session: Session
+    with get_session() as session:
         db_ids = set([str(model_id) for (model_id,) in session.query(Model.id)])
         missing_ids = db_ids.difference(file_ids)
         _LOGGER.warning('The following model ids are missing the model file: %s', missing_ids)

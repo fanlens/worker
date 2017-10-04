@@ -3,10 +3,12 @@
 
 """some tools to work with the data"""
 from typing import Any, Callable, TypeVar
-from celery import Celery, Task
+
 from celery.utils import gen_task_name
-from job import runs_exclusive, Space
-from utils.progress import ProgressCallbackBase
+
+from celery import Celery, Task
+from common.job import runs_exclusive, Space
+from common.utils.progress import ProgressCallbackBase
 
 
 class ProgressCallback(ProgressCallbackBase):
