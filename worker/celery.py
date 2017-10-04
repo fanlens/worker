@@ -13,9 +13,9 @@ app = Celery('fanlens',
              broker=_CONFIG.get('CELERY', 'broker'),
              backend=_CONFIG.get('CELERY', 'backend'),
              include=[
-                 'worker.meta',
-                 'worker.brain',
-                 'worker.scrape',
+                 'worker.meta_tasks',
+                 'worker.brain_tasks',
+                 'worker.scrape_tasks',
              ])
 
 # Optional configuration, see the application user guide.
@@ -33,19 +33,19 @@ app.conf.update(
     TIMEZONE='UTC',
     CELERYBEAT_SCHEDULE={
         'scheduled_meta_pipeline': {
-            'task': 'worker.meta.meta_pipeline',
+            'task': 'worker.meta_tasks.meta_pipeline',
             'schedule': _CONFIG.getint('WORKER', 'meta_schedule')
         },
         'scheduled_brain_maintenance': {
-            'task': 'worker.brain.maintenance',
+            'task': 'worker.brain_tasks.maintenance',
             'schedule': _CONFIG.getint('WORKER', 'maintenance_schedule')
         },
         'scheduled_brain_retrain': {
-            'task': 'worker.brain.retrain',
+            'task': 'worker.brain_tasks.retrain',
             'schedule': _CONFIG.getint('WORKER', 'retrain_schedule')
         },
         'scheduled_scrape_recrawl': {
-            'task': 'worker.scrape.recrawl',
+            'task': 'worker.scrape_tasks.recrawl',
             'schedule': _CONFIG.getint('WORKER', 'recrawl_schedule')
         }
     })
