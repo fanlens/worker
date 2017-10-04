@@ -59,7 +59,7 @@ def extract_text(*_: Any) -> None:
     _LOGGER.info('Extracting text ...')
     num = 0
     with get_session() as session:  # type: Session
-        for datum in session.query(Data).filter(Data.text.is_(None)):
+        for datum in session.query(Data).outerjoin(Text).filter(Text.id.is_(None)):
             _extract_text(datum)
             num += 1
             if not num % 500:
@@ -80,7 +80,7 @@ def extract_time(*_: Any) -> None:
     _LOGGER.info('Extracting time ...')
     num = 0
     with get_session() as session:  # type: Session
-        for datum in session.query(Data).filter(Data.time.is_(None)):
+        for datum in session.query(Data).outerjoin(Time).filter(Time.id.is_(None)):
             _extract_time(datum)
             num += 1
             if not num % 500:
@@ -105,7 +105,7 @@ def add_language(*_: Any) -> None:
     _LOGGER.info('Adding language ...')
     num = 0
     with get_session() as session:  # type: Session
-        for datum in session.query(Data).filter(Data.text.isnot(None) & Data.language.is_(None)):
+        for datum in session.query(Data).join(Text).outerjoin(Language).filter(Language.id.is_(None)):
             _add_language(datum)
             num += 1
             if not num % 500:
@@ -149,7 +149,8 @@ def add_translation(*_: Any) -> None:
                    .join(SourceFeature, SourceFeature.source_id == Data.source_id)
                    .join(Text, Text.data_id == Data.id)
                    .join(Language, Language.data_id == Data.id)
-                   .filter(Text.translations.is_(None) &
+                   .outerjoin(Translation, Translation.text_id == Text.id)
+                   .filter(Translation.id.is_(None) &
                            (SourceFeature.feature == 'translate') &
                            Language.language.in_((Lang.de.name, Lang.es.name))))
         buffered = Buffered(entries, _TranslationsHandler(session), 10)
@@ -172,18 +173,22 @@ class _FingerprintHandler(object):
         :param entry: the data entry
         :raises ValueError, if no english text can be provided
         """
-        entry_text = None  # type: Optional[str]
-        if entry.language.language == Lang.en.name:
-            entry_text = entry.text.text
-        else:
-            english_translation = entry.text.translations.filter(
-                Translation.target_language == Lang.en.name).one_or_none()  # type: Translation
-            if english_translation:
-                entry_text = english_translation.translation
-        if entry_text is not None:
+        entry_text = entry.text.text  # type: str
+        if entry_text is None:
+            raise ValueError('Data entry %s has no text' % entry.id)
+
+        language = entry.language.language
+        if language == Lang.en:
             return entry_text
+
+        english_translation = entry.text.translations.filter(
+            Translation.target_language == Lang.en.name).one_or_none()  # type: Optional[Translation]
+        if english_translation:
+            return english_translation.translation
         else:
-            raise ValueError('Data entry is neither english nor posses an English translation')
+            raise ValueError(
+                'Data entry %d is neither english nor posses an English translation:'
+                '\n\t%s\n\tLanguage: %s' % (entry.id, entry_text, language))
 
     def __call__(self, buffer: Iterable[Data]) -> None:
         """ :param buffer: source of `Data` objects to create fingerprints for """
@@ -194,7 +199,7 @@ class _FingerprintHandler(object):
         fingerprints = get_fingerprints(texts)
         for store_entry, fingerprint in zip(buffer, fingerprints):
             store_entry.fingerprint = Fingerprint(fingerprint=fingerprint)
-        _LOGGER.info('Flushing fingerprint data, %d fingerprints', len(fingerprints))
+        _LOGGER.info('Flushing fingerprint data, %d fingerprints', len(list(fingerprints)))
         self._session.commit()
 
 
@@ -206,8 +211,9 @@ def add_fingerprint(*_: Any) -> None:
         entries = (session.query(Data)
                    .join(Text, Text.data_id == Data.id)
                    .outerjoin(Translation, (Translation.text_id == Text.id))
+                   .outerjoin(Fingerprint, Fingerprint.data_id == Data.id)
                    .filter((Data.language.has(language=Lang.en.name) | (Translation.target_language == Lang.en.name)) &
-                           Data.fingerprint.is_(None)))
+                           Fingerprint.id.is_(None)))
         buffered = Buffered(entries, _FingerprintHandler(session), 500)
         buffered()
     _LOGGER.info('... Done fingerprints')
