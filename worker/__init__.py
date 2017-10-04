@@ -6,9 +6,10 @@ from typing import Any, Callable, TypeVar
 from celery import Celery, Task
 from celery.utils import gen_task_name
 from job import runs_exclusive, Space
+from utils.progress import ProgressCallbackBase
 
 
-class ProgressCallback(object):
+class ProgressCallback(ProgressCallbackBase):
     # pylint: disable=too-few-public-methods
     """Simple Helper that stores the progress of the current task int the task meta"""
 

@@ -191,7 +191,7 @@ class _FingerprintHandler(object):
         if not texts:
             return
         _LOGGER.info('Creating fingerprints for %d texts', len(texts))
-        fingerprints = [result.positions for result in get_fingerprints(texts)]
+        fingerprints = get_fingerprints(texts)
         for store_entry, fingerprint in zip(buffer, fingerprints):
             store_entry.fingerprint = Fingerprint(fingerprint=fingerprint)
         _LOGGER.info('Flushing fingerprint data, %d fingerprints', len(fingerprints))
