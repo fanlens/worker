@@ -13,7 +13,7 @@ import sqlalchemy
 from sqlalchemy.orm import Session
 
 from brain.feature.fingerprint import get_fingerprint, TFingerprint
-from brain.lens import Sample, TPrediction, Lens, LensTrainer, model_file_root, model_file_path
+from brain.lens import Sample, ScoredPrediction, TScoredPredictionSet, Lens, LensTrainer, MODEL_FILE_ROOT, model_file_path
 from db import get_session, insert_or_ignore
 from db.models.activities import Data, Source, TagSet, User
 from db.models.brain import Model, Prediction
@@ -54,7 +54,7 @@ def best_model_for_source_by_id(tagset_id: int, source_id: int) -> Optional[uuid
 def predict_text(model_id: uuid.UUID,
                  text: str,
                  fingerprint: Optional[TFingerprint] = None,
-                 created_time: Optional[datetime.datetime] = None) -> List[TPrediction]:
+                 created_time: Optional[datetime.datetime] = None) -> List[ScoredPrediction]:
     """
     Get a prediction for the provided text.
     :param model_id: id of the `Model` to use
@@ -68,16 +68,16 @@ def predict_text(model_id: uuid.UUID,
     # if not is_english(text):
     #     raise ValueError('text is not in english')
     if not fingerprint:
-        fingerprint = get_fingerprint(text).positions
+        fingerprint = get_fingerprint(text)
     if not created_time:
         created_time = datetime.datetime.utcnow()
     classifier = get_classifier(model_id=model_id)
-    prediction = list(classifier.predict_proba([(text, fingerprint, created_time)]))[0]  # type: List[TPrediction]
+    prediction = list(classifier.predict_proba([(text, fingerprint, created_time)]))[0]  # type: TScoredPredictionSet
     return prediction
 
 
 @app.task
-def predict_stored(model_id: uuid.UUID, data: Data) -> Dict[str, Union[int, List[TPrediction]]]:
+def predict_stored(model_id: uuid.UUID, data: Data) -> Dict[str, Union[int, TScoredPredictionSet]]:
     """
     Generate a prediction of a stored `Data`
 
@@ -128,7 +128,7 @@ def group_by_source_id(data: Iterable[Data]) -> Iterable[Tuple[int, Iterable[Dat
 
 
 def predict_buffered(model_id: uuid.UUID, buffer: List[Tuple[int, Sample]]) \
-        -> Tuple[Iterable[Tuple[int, List[TPrediction]]], Union[uuid.UUID, None]]:
+        -> Tuple[Iterable[Tuple[int, TScoredPredictionSet]], Union[uuid.UUID, None]]:
     """
     Perform predictions for an indexed buffer of samples.
     :param model_id: model to use
@@ -243,7 +243,7 @@ def maintenance() -> None:
     Run maintenance job for brain: clean up db entries/model ids no longer in use
     """
     _LOGGER.info("Beginning Brain maintenance...")
-    (_, _, file_id_list) = next(os.walk(model_file_root))
+    (_, _, file_id_list) = next(os.walk(MODEL_FILE_ROOT))
     file_ids = set(file_id_list)
     with get_session() as session:  # type: Session
         db_ids = set([str(model_id) for (model_id,) in session.query(Model.id)])
