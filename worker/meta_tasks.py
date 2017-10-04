@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """`Celery` tasks related to extracting meta data of stored `Data`"""
 from datetime import datetime
-from typing import Iterable, Any, Optional
+from typing import Iterable, Any, Optional, cast
 
 import dateutil.parser
 from celery.utils.log import get_task_logger
@@ -188,7 +188,7 @@ class _FingerprintHandler(object):
         english_translation: Optional[Translation] = entry.text.translations.filter(
             Translation.target_language == Lang.en.name).one_or_none()
         if english_translation:
-            return english_translation.translation
+            return cast(str, english_translation.translation)
         else:
             raise ValueError(
                 'Data entry %d is neither english nor posses an English translation:'

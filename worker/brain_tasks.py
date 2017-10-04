@@ -55,7 +55,7 @@ def best_model_for_source_by_id(tagset_id: int, source_id: int) -> Optional[uuid
 def predict_text(model_id: uuid.UUID,
                  text: str,
                  fingerprint: Optional[TFingerprint] = None,
-                 created_time: Optional[datetime.datetime] = None) -> List[ScoredPrediction]:
+                 created_time: Optional[datetime.datetime] = None) -> TScoredPredictionSet:
     """
     Get a prediction for the provided text.
     :param model_id: id of the `Model` to use
