@@ -8,12 +8,12 @@ import uuid
 from functools import lru_cache
 from typing import Optional, List, Dict, Union, Iterable, Any, Tuple, NamedTuple, cast
 
+from celery.utils.log import get_task_logger
 from sqlalchemy import text as sqlalchemy_text
 from sqlalchemy.orm import Session
-from celery.utils.log import get_task_logger
 
 from brain.feature.fingerprint import get_fingerprint, TFingerprint
-from brain.lens import Sample, ScoredPrediction, TScoredPredictionSet, Lens, LensTrainer, MODEL_FILE_ROOT, \
+from brain.lens import Sample, TScoredPredictionSet, Lens, LensTrainer, MODEL_FILE_ROOT, \
     model_file_path
 from common.db import get_session, insert_or_ignore
 from common.db.models.activities import Data, Source, TagSet, User
