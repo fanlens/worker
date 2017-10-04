@@ -8,9 +8,9 @@ import uuid
 from functools import lru_cache
 from typing import Optional, List, Dict, Union, Iterable, Any, Tuple, NamedTuple, cast
 
-import sqlalchemy
-from celery.utils.log import get_task_logger
+from sqlalchemy import text as sqlalchemy_text
 from sqlalchemy.orm import Session
+from celery.utils.log import get_task_logger
 
 from brain.feature.fingerprint import get_fingerprint, TFingerprint
 from brain.lens import Sample, ScoredPrediction, TScoredPredictionSet, Lens, LensTrainer, MODEL_FILE_ROOT, \
@@ -20,7 +20,7 @@ from common.db.models.activities import Data, Source, TagSet, User
 from common.db.models.brain import Model, Prediction
 from common.job import Space
 from . import ProgressCallback, exclusive_task
-from .celery import app
+from .app import app
 
 _LOGGER = get_task_logger(__name__)
 
@@ -259,7 +259,7 @@ def maintenance() -> None:
 
 _RetrainModels = NamedTuple('_RetrainModels', [('user_id', int), ('tagset_id', int), ('source_ids', Iterable[int]),
                                                ('trained_ts', datetime.datetime)])
-_RETRAIN_MODELS_SQL = sqlalchemy.text('''
+_RETRAIN_MODELS_SQL = sqlalchemy_text('''
 WITH modles_by_user_tagset_source_trained AS (
     SELECT model.id, model.created_by_user_id, model.tagset_id, jsonb_agg(DISTINCT src_mdl.source_id ORDER BY src_mdl.source_id) AS sources, model.trained_ts
     FROM activity.model AS model

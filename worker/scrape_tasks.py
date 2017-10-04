@@ -1,21 +1,20 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """`Celery` tasks related to crawling/scraping of web information"""
-
 from typing import Tuple, Dict, Optional
 
 import requests
 from bs4 import BeautifulSoup
+from celery import group
 from celery.utils.log import get_task_logger
 from sqlalchemy import text
 
-from celery import group
 from common.db import get_session, insert_or_ignore
 from common.db.models.scrape import Shortener, CrawlLog, CrawlState
 from common.job import Space
 from crawler.process import facebook_crawler_process
 from . import exclusive_task
-from .celery import app
+from .app import app
 
 _LOGGER = get_task_logger(__name__)
 

@@ -19,8 +19,8 @@ from common.job import Space
 from common.utils.buffered import Buffered
 from common.utils.simple_utc import SimpleUTC
 from . import exclusive_task
-from .brain import predict_stored_all
-from .celery import app
+from .brain_tasks import predict_stored_all
+from .app import app
 
 _LOGGER = get_task_logger(__name__)
 
