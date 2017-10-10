@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """`Celery` tasks related to extracting meta data of stored `Data`"""
 from datetime import datetime
-from typing import Iterable, Any, Optional, cast
+from typing import Any, Iterable, Optional, cast
 
 import dateutil.parser
 from celery.utils.log import get_task_logger
@@ -10,17 +10,17 @@ from celery.utils.log import get_task_logger
 from brain.feature.fingerprint import get_fingerprints
 from brain.feature.language_detect import language_detect
 from brain.feature.translate import translate
-from common.db import get_session, Session
-from common.db.models.activities import Data, Fingerprint, Lang, Language, SourceUser, TagSetUser, Text, Time, \
-    Translation, Type, SourceFeature
+from common.db import Session, get_session
+from common.db.models.activities import Data, Fingerprint, Lang, Language, SourceFeature, SourceUser, TagSetUser, Text, \
+    Time, Translation, Type
 from common.db.models.brain import Model, ModelSources, ModelUser, Prediction
 from common.db.models.users import User
 from common.job import Space
-from common.utils.buffered import Buffered
+from common.utils.buffered import Buffered, HandlerBase
 from common.utils.simple_utc import SimpleUTC
 from . import exclusive_task
-from .brain_tasks import predict_stored_all
 from .app import app
+from .brain_tasks import predict_stored_all
 
 _LOGGER = get_task_logger(__name__)
 
@@ -117,7 +117,7 @@ def add_language(*_: Any) -> None:
     _LOGGER.info('... Done, added %d languages', num)
 
 
-class _TranslationsHandler(object):
+class _TranslationsHandler(HandlerBase[Data]):
     # pylint: disable=too-few-public-methods
     """Handler used for buffered translation"""
 
@@ -125,14 +125,14 @@ class _TranslationsHandler(object):
         """ :param session: the database session to bind to """
         self._session = session
 
-    def __call__(self, buffer: Iterable[Data]) -> None:
-        """ :param buffer: source of `Data` objects to create translations for """
-        texts = [entry.text.text for entry in buffer]
+    def __call__(self, batch: Iterable[Data]) -> None:
+        """ :param batch: source of `Data` objects to create translations for """
+        texts = [entry.text.text for entry in batch]
         if not texts:
             return
         _LOGGER.info('Creating translations for %d texts', len(texts))
         translations = translate(texts)
-        for store_entry, translation in zip(buffer, translations):
+        for store_entry, translation in zip(batch, translations):
             if translation:
                 store_entry.text.translations.append(Translation(translation=translation, target_language='en'))
         _LOGGER.info('Flushing translations data, %d translations', len(translations))
@@ -162,7 +162,7 @@ def add_translation(*_: Any) -> None:
         _LOGGER.info('... Done translations')
 
 
-class _FingerprintHandler(object):
+class _FingerprintHandler(HandlerBase[Data]):
     # pylint: disable=too-few-public-methods
     """Handler used for buffered translation"""
 
@@ -194,14 +194,14 @@ class _FingerprintHandler(object):
                 'Data entry %d is neither english nor posses an English translation:'
                 '\n\t%s\n\tLanguage: %s' % (entry.id, entry_text, language))
 
-    def __call__(self, buffer: Iterable[Data]) -> None:
-        """ :param buffer: source of `Data` objects to create fingerprints for """
-        texts = [self._get_text(entry) or "unknown" for entry in buffer]
+    def __call__(self, batch: Iterable[Data]) -> None:
+        """ :param batch: source of `Data` objects to create fingerprints for """
+        texts = [self._get_text(entry) or "unknown" for entry in batch]
         if not texts:
             return
         _LOGGER.info('Creating fingerprints for %d texts', len(texts))
         fingerprints = list(get_fingerprints(texts))
-        for store_entry, fingerprint in zip(buffer, fingerprints):
+        for store_entry, fingerprint in zip(batch, fingerprints):
             store_entry.fingerprint = Fingerprint(fingerprint=fingerprint)
         _LOGGER.info('Flushing fingerprint data, %d fingerprints', len(fingerprints))
         self._session.commit()
