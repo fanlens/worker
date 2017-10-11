@@ -13,6 +13,7 @@ setup(
     include_package_data=True,
     install_requires=[
         'fanlens-common',
+        'fanlens-brain',
         'fanlens-crawler',
 
         'python-dateutil',

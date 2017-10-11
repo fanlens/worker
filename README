@@ -1,0 +1,3 @@
+Fanlens Celery worker.
+
+Runs on demand tasks and some periodic tasks (e.g. recrawling, metadata extraction, etc.)
