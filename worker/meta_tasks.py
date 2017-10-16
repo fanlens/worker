@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """`Celery` tasks related to extracting meta data of stored `Data`"""
 from datetime import datetime
 from typing import Any, Iterable, Optional, cast

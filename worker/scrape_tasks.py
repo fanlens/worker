@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """`Celery` tasks related to crawling/scraping of web information"""
 from typing import Tuple, Dict, Optional
 

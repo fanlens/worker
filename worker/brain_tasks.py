@@ -1,5 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
 """`Celery` tasks related to training and usage of brain/machine learning models"""
 import datetime
 import itertools

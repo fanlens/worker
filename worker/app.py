@@ -1,6 +1,3 @@
-#!/usr/bin/env python
-# -*- coding: utf-8 -*-
-
 """`Celery` app reference and setup"""
 
 from celery import Celery
